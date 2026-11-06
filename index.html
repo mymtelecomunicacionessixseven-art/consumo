@@ -60,6 +60,8 @@ h2 { font-size: 20px; }
 .carga .acciones { display: flex; flex-wrap: wrap; gap: 8px; }
 .carga .estado { color: var(--suave); }
 .carga .estado b { color: var(--tinta); font-weight: 600; }
+.carga .estado a { color: var(--marca); }
+.carga .scord { padding: 8px 10px; border-radius: 6px; background: var(--fila); font-size: 13px; }
 td input[readonly] { background: transparent; border-color: transparent; color: var(--tinta); }
 td.suave { color: var(--suave); }
 .historial summary { cursor: pointer; color: var(--marca); font-weight: 600; font-size: 13px; }
@@ -150,6 +152,7 @@ td input { width: 96px; text-align: right; padding: 4px 6px; font: 13px var(--f-
     </section>
     <section class="panel carga" id="zonaStock" aria-labelledby="tituloStock">
       <h2 id="tituloStock">2 · Stock del técnico <span>mochila · cada carga reemplaza a la anterior</span></h2>
+      <div class="estado scord" id="estadoScord">Automático desde Scord: apagado. Para que la mochila se actualice sola cada 5 minutos, instala la extensión <a href="https://www.tampermonkey.net/" target="_blank" rel="noopener">Tampermonkey</a> y luego <a href="consumo-scord.user.js" target="_blank" rel="noopener">este script</a>, y deja Scord con la sesión iniciada en este navegador.</div>
       <div class="estado" id="estadoStock">Aún no se cargó el Stock Técnico. También puedes escribir la mochila a mano eligiendo un técnico en el filtro.</div>
       <div class="acciones">
         <input type="file" id="archivoStock" accept=".xlsx,.xls,.csv" class="oculto">
@@ -718,6 +721,42 @@ $('btnBorrarStock').addEventListener('click', () => {
   pintarEstadoStock('Mochilas borradas. Carga un Stock Técnico nuevo o escribe la mochila a mano eligiendo un técnico.');
   if (D) pintar();
 });
+/* Actualización automática: el script de Tampermonkey (consumo-scord.user.js) lee el reporte de Scord
+   cada 5 minutos con la sesión de este navegador y manda las filas aquí. Reemplaza las mochilas. */
+let repintarAlSalir = false;
+function repintarSinInterrumpir() {
+  if (!D) return;
+  if (document.hasFocus() && $('tStock').contains(document.activeElement)) { repintarAlSalir = true; return; }   // no cortar a quien está escribiendo
+  pintar();
+}
+$('tStock').addEventListener('focusout', () => setTimeout(() => {
+  if (repintarAlSalir && !$('tStock').contains(document.activeElement)) { repintarAlSalir = false; pintar(); }
+}, 0));
+window.addEventListener('message', e => {
+  const m = e.data;
+  if (e.origin !== location.origin || !m || m.origen !== 'mym-scord') return;
+  const el = $('estadoScord');
+  if (m.tipo === 'leyendo') { el.textContent = 'Leyendo el Stock Técnico desde Scord…'; return; }
+  if (m.tipo === 'error') {
+    el.innerHTML = error(m.motivo === 'sesion'
+      ? 'Scord pidió iniciar sesión. Entra a mifibra.scordsoft.net en este navegador; la próxima lectura (cada 5 minutos) se hará sola.'
+      : 'Automático desde Scord: ' + esc(m.motivo) + ' Se reintenta en 5 minutos.');
+    return;
+  }
+  if (m.tipo !== 'stock' || !Array.isArray(m.filas)) return;
+  try {
+    if (!esStockTecnico(m.filas)) throw new Error('no trae las columnas CodMaterial y Asignado.');
+    mochilas = desdeStock(m.filas, 'Scord (automático)');
+    guardar('consumo.mochilas', mochilas);
+    const hora = new Date(m.leido).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+    el.innerHTML = `<span style="color:var(--bien)">● Conectado a Scord · actualizado a las ${hora} · se vuelve a leer cada 5 minutos y reemplaza lo escrito a mano en la mochila</span>`;
+    pintarEstadoStock();
+    repintarSinInterrumpir();
+  } catch (err) {
+    el.innerHTML = error('El reporte de Scord llegó con otro formato: ' + esc(err.message));
+  }
+});
+
 let borrarPendiente = null;
 $('btnBorrar').addEventListener('click', () => {
   const b = $('btnBorrar');
