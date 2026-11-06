@@ -52,14 +52,16 @@ h2 { font-size: 20px; }
 .cabecera p { margin: 4px 0 0; color: var(--suave); }
 .etiqueta { display: inline-block; font: 600 11px/1 var(--f-cuerpo); text-transform: uppercase; letter-spacing: .08em; color: var(--suave); }
 .panel { background: var(--papel); border: 1px solid var(--linea); border-radius: 8px; }
-.carga { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 14px; border-style: dashed; }
+.cargas { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.carga { display: grid; gap: 10px; align-content: start; padding: 12px 14px; border-style: dashed; }
 .carga.arrastre { border-color: var(--acento); background: var(--acento-suave); }
-.carga .estado { flex: 1 1 260px; color: var(--suave); }
+.carga h2 { font-size: 18px; }
+.carga h2 span { font: 400 12px var(--f-cuerpo); color: var(--suave); letter-spacing: 0; margin-left: 6px; }
+.carga .acciones { display: flex; flex-wrap: wrap; gap: 8px; }
+.carga .estado { color: var(--suave); }
 .carga .estado b { color: var(--tinta); font-weight: 600; }
-.carga .estado-stock { flex: 1 1 100%; }
 td input[readonly] { background: transparent; border-color: transparent; color: var(--tinta); }
 td.suave { color: var(--suave); }
-.historial { flex: 1 1 100%; }
 .historial summary { cursor: pointer; color: var(--marca); font-weight: 600; font-size: 13px; }
 .historial table { margin-top: 8px; font-size: 13px; }
 .boton { font: 600 13px/1 var(--f-cuerpo); padding: 9px 14px; border-radius: 6px; border: 1px solid var(--marca); background: var(--marca); color: var(--papel); cursor: pointer; }
@@ -135,14 +137,27 @@ td input { width: 96px; text-align: right; padding: 4px 6px; font: 13px var(--f-
     </div>
   </header>
 
-  <section class="panel carga" id="zonaCarga" aria-label="Cargar data">
-    <div class="estado" id="estadoCarga">Cargando…</div>
-    <input type="file" id="archivo" accept=".xlsx,.xls,.csv" multiple class="oculto">
-    <button class="boton" id="btnCargar" type="button">Cargar Excel (Parte Diario o Stock Técnico)</button>
-    <button class="boton secundario oculto" id="btnBorrar" type="button">Borrar data acumulada</button>
-    <div class="estado estado-stock" id="estadoStock">Mochilas: aún no se cargó el Stock Técnico. Puedes cargarlo con el mismo botón o escribir la mochila a mano eligiendo un técnico.</div>
-    <details class="historial oculto" id="historial"></details>
-  </section>
+  <div class="cargas">
+    <section class="panel carga" id="zonaParte" aria-labelledby="tituloParte">
+      <h2 id="tituloParte">1 · Parte Diario <span>consumo de los técnicos · se acumula sin duplicar</span></h2>
+      <div class="estado" id="estadoCarga">Cargando…</div>
+      <div class="acciones">
+        <input type="file" id="archivoParte" accept=".xlsx,.xls,.csv" multiple class="oculto">
+        <button class="boton" id="btnParte" type="button">Cargar Parte Diario</button>
+        <button class="boton secundario oculto" id="btnBorrar" type="button">Borrar data acumulada</button>
+      </div>
+      <details class="historial oculto" id="historial"></details>
+    </section>
+    <section class="panel carga" id="zonaStock" aria-labelledby="tituloStock">
+      <h2 id="tituloStock">2 · Stock del técnico <span>mochila · cada carga reemplaza a la anterior</span></h2>
+      <div class="estado" id="estadoStock">Aún no se cargó el Stock Técnico. También puedes escribir la mochila a mano eligiendo un técnico en el filtro.</div>
+      <div class="acciones">
+        <input type="file" id="archivoStock" accept=".xlsx,.xls,.csv" class="oculto">
+        <button class="boton" id="btnStock" type="button">Cargar Stock Técnico</button>
+        <button class="boton secundario oculto" id="btnBorrarStock" type="button">Borrar mochilas</button>
+      </div>
+    </section>
+  </div>
 
   <section class="panel filtros" aria-label="Filtros">
     <label class="ancho"><span class="etiqueta">Técnico</span><select id="fTec"></select></label>
@@ -618,7 +633,8 @@ function desdeStock(filas, nombreArchivo) {
 
 function pintarEstadoStock(aviso) {
   const el = $('estadoStock');
-  if (!mochilas) return;
+  $('btnBorrarStock').classList.toggle('oculto', !mochilas);
+  if (!mochilas) { if (aviso) el.innerHTML = aviso; return; }
   const tecs = Object.values(mochilas.tec);
   const enParte = D ? new Set(D.tecnicos.map(claveTec)) : new Set();
   const sinCruce = D ? tecs.filter(t => !enParte.has(claveTec(t.nombre))).length : 0;
@@ -628,6 +644,33 @@ function pintarEstadoStock(aviso) {
     (sinCruce ? ` · ${sinCruce} técnicos del stock no tienen consumo en el Parte Diario (se suman en "Todos")` : '');
 }
 
+const error = t => `<span style="color:var(--alerta)">${t}</span>`;
+
+/* Recuadro 2: Stock Técnico. Reemplaza las mochilas anteriores. */
+async function cargarStock(lista) {
+  const file = [...(lista || [])][0];
+  if (!file) return;
+  const anterior = $('estadoStock').innerHTML;
+  $('estadoStock').textContent = 'Leyendo ' + file.name + '…';
+  try {
+    const filasExcel = await leerFilas(file);
+    if (!esStockTecnico(filasExcel)) {
+      const pareceParte = filasExcel.slice(0, 40).some(f => f.some(c => normal(c) === 'fecha movimiento'));
+      throw new Error(pareceParte ? 'este archivo es un Parte Diario: cárgalo en el recuadro 1.'
+        : 'no encontré las columnas CodMaterial y Asignado. Revisa que sea el reporte "Stock Técnico" exportado del sistema.');
+    }
+    mochilas = desdeStock(filasExcel, file.name);
+    const ok = guardar('consumo.mochilas', mochilas);
+    pintarEstadoStock(`<span style="color:var(--bien)"><b>${esc(file.name)}</b>: stock de ${Object.keys(mochilas.tec).length} técnicos cargado (${nf0.format(mochilas.filas)} filas).</span>` +
+      (ok ? '' : '<br>' + error('Este navegador no dejó guardar las mochilas: se perderán al cerrar la página.')));
+    if (D) pintar();
+  } catch (e) {
+    $('estadoStock').innerHTML = error(`No se pudo cargar <b>${esc(file.name)}</b>: ${esc(e.message)}`) + (mochilas ? '' : '<br>' + anterior);
+    if (mochilas) pintarEstadoStock($('estadoStock').innerHTML);
+  }
+}
+
+/* Recuadro 1: Parte Diario. Se suma a lo ya cargado sin repetir movimientos. */
 async function cargarArchivos(lista) {
   const archivos = [...(lista || [])];
   if (!archivos.length) return;
@@ -637,14 +680,7 @@ async function cargarArchivos(lista) {
     $('estadoCarga').textContent = 'Leyendo ' + file.name + '…';
     try {
       const filasExcel = await leerFilas(file);
-      if (esStockTecnico(filasExcel)) {
-        mochilas = desdeStock(filasExcel, file.name);
-        const ok = guardar('consumo.mochilas', mochilas);
-        pintarEstadoStock(`<span style="color:var(--bien)"><b>${esc(file.name)}</b>: stock de ${Object.keys(mochilas.tec).length} técnicos cargado (${nf0.format(mochilas.filas)} filas). Reemplaza a las mochilas anteriores.</span>` +
-          (ok ? '' : '<br><span style="color:var(--alerta)">Este navegador no dejó guardar las mochilas: se perderán al cerrar la página.</span>'));
-        if (D) pintar();
-        continue;
-      }
+      if (esStockTecnico(filasExcel)) throw new Error('este archivo es un Stock Técnico: cárgalo en el recuadro 2.');
       const nuevo = desdeHoja(filasExcel, file.name);
       const { d, nuevas, repetidas } = fusionar(acumulado, nuevo);
       const guardado = guardar(CLAVE_DATA, d);
@@ -663,12 +699,25 @@ async function cargarArchivos(lista) {
   else $('estadoCarga').innerHTML = '<b>Aún no hay Parte Diario.</b> Carga el Excel del Parte Diario para ver el consumo y el stock requerido.';
 }
 
-$('btnCargar').addEventListener('click', () => $('archivo').click());
-$('archivo').addEventListener('change', e => { cargarArchivos(e.target.files); e.target.value = ''; });
-const zona = $('zonaCarga');
-['dragenter', 'dragover'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); zona.classList.add('arrastre'); }));
-['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === 'drop' || !e.relatedTarget) zona.classList.remove('arrastre'); }));
-document.addEventListener('drop', e => cargarArchivos(e.dataTransfer.files));
+$('btnParte').addEventListener('click', () => $('archivoParte').click());
+$('archivoParte').addEventListener('change', e => { cargarArchivos(e.target.files); e.target.value = ''; });
+$('btnStock').addEventListener('click', () => $('archivoStock').click());
+$('archivoStock').addEventListener('change', e => { cargarStock(e.target.files); e.target.value = ''; });
+// Arrastrar: cada recuadro recibe su propio archivo; soltar fuera de ellos no hace nada
+['dragover', 'drop'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+[['zonaParte', cargarArchivos], ['zonaStock', cargarStock]].forEach(([id, cargar]) => {
+  const zona = $(id);
+  zona.addEventListener('dragenter', () => zona.classList.add('arrastre'));
+  zona.addEventListener('dragover', () => zona.classList.add('arrastre'));
+  zona.addEventListener('dragleave', e => { if (!zona.contains(e.relatedTarget)) zona.classList.remove('arrastre'); });
+  zona.addEventListener('drop', e => { zona.classList.remove('arrastre'); cargar(e.dataTransfer.files); });
+});
+$('btnBorrarStock').addEventListener('click', () => {
+  mochilas = null;
+  try { localStorage.removeItem('consumo.mochilas'); } catch (e) {}
+  pintarEstadoStock('Mochilas borradas. Carga un Stock Técnico nuevo o escribe la mochila a mano eligiendo un técnico.');
+  if (D) pintar();
+});
 let borrarPendiente = null;
 $('btnBorrar').addEventListener('click', () => {
   const b = $('btnBorrar');
@@ -753,7 +802,7 @@ $('btnCopiar').addEventListener('click', async () => {
   } else {
     pintarEstadoStock();
     $('estadoCarga').innerHTML = '<b>Aún no hay data.</b> Carga el Excel del Parte Diario exportado del sistema. El archivo se lee en tu navegador y no se sube a ningún servidor.';
-    $('tStock').tBodies[0].innerHTML = '<tr><td class="vacio">Carga el Excel del Parte Diario (botón de arriba o arrastrándolo a la página) para ver el consumo de cada material y el stock requerido.</td></tr>';
+    $('tStock').tBodies[0].innerHTML = '<tr><td class="vacio">Carga el Parte Diario en el recuadro 1 (con el botón o arrastrando el archivo) para ver el consumo de cada material y el stock requerido.</td></tr>';
     $('detalle').innerHTML = '<div class="vacio">Aquí verás el consumo diario y por técnico del material que elijas.</div>';
   }
 })();
