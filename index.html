@@ -56,6 +56,12 @@ h2 { font-size: 20px; }
 .carga.arrastre { border-color: var(--acento); background: var(--acento-suave); }
 .carga .estado { flex: 1 1 260px; color: var(--suave); }
 .carga .estado b { color: var(--tinta); font-weight: 600; }
+.carga .estado-stock { flex: 1 1 100%; }
+td input[readonly] { background: transparent; border-color: transparent; color: var(--tinta); }
+td.suave { color: var(--suave); }
+.historial { flex: 1 1 100%; }
+.historial summary { cursor: pointer; color: var(--marca); font-weight: 600; font-size: 13px; }
+.historial table { margin-top: 8px; font-size: 13px; }
 .boton { font: 600 13px/1 var(--f-cuerpo); padding: 9px 14px; border-radius: 6px; border: 1px solid var(--marca); background: var(--marca); color: var(--papel); cursor: pointer; }
 .boton.secundario { background: transparent; color: var(--marca); }
 .boton:focus-visible, select:focus-visible, input:focus-visible, th:focus-visible, tr:focus-visible, .pestana:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
@@ -69,7 +75,8 @@ select, input[type="number"], input[type="search"] { font: 14px var(--f-cuerpo);
 .cifra strong { font: 700 30px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
 .cifra span.nota { color: var(--suave); font-size: 12px; }
 .cuerpo { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
-@media (max-width: 1100px) { .cuerpo { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .cuerpo { grid-template-columns: minmax(0, 1fr); } }
+.envoltura > * { min-width: 0; }
 .pestanas { display: flex; gap: 4px; padding: 10px 12px 0; border-bottom: 1px solid var(--linea); flex-wrap: wrap; }
 .pestana { font: 600 14px var(--f-cuerpo); padding: 8px 12px; border: 0; background: none; color: var(--suave); border-bottom: 3px solid transparent; cursor: pointer; }
 .pestana[aria-selected="true"] { color: var(--tinta); border-bottom-color: var(--acento); }
@@ -130,9 +137,11 @@ td input { width: 96px; text-align: right; padding: 4px 6px; font: 13px var(--f-
 
   <section class="panel carga" id="zonaCarga" aria-label="Cargar data">
     <div class="estado" id="estadoCarga">Cargando…</div>
-    <input type="file" id="archivo" accept=".xlsx,.xls,.csv" class="oculto">
-    <button class="boton" id="btnCargar" type="button">Cargar Excel del Parte Diario</button>
-    <button class="boton secundario oculto" id="btnOriginal" type="button">Volver a la data incluida</button>
+    <input type="file" id="archivo" accept=".xlsx,.xls,.csv" multiple class="oculto">
+    <button class="boton" id="btnCargar" type="button">Cargar Excel (Parte Diario o Stock Técnico)</button>
+    <button class="boton secundario oculto" id="btnBorrar" type="button">Borrar data acumulada</button>
+    <div class="estado estado-stock" id="estadoStock">Mochilas: aún no se cargó el Stock Técnico. Puedes cargarlo con el mismo botón o escribir la mochila a mano eligiendo un técnico.</div>
+    <details class="historial oculto" id="historial"></details>
   </section>
 
   <section class="panel filtros" aria-label="Filtros">
@@ -178,13 +187,21 @@ const nf0 = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 0 });
 const nf2 = new Intl.NumberFormat('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const $ = id => document.getElementById(id);
-const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } };
 const leer = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
 
 let D = null;                 // data activa
 let estado = { tec: -1, mes: null, tipo: -1, busca: '', orden: { col: 'consumo', dir: -1 }, sel: null, vista: 'stock' };
-let stockActual = leer('consumo.stock', {});
+let stockActual = leer('consumo.stock', {});      // stock de almacén por código: { 'ALMACEN|cod': n }
+for (const k of Object.keys(stockActual)) {        // versión anterior: 'TODOS|cod' era el stock actual del almacén
+  if (k.startsWith('TODOS|')) { const n = 'ALMACEN|' + k.slice(6); if (!(n in stockActual)) stockActual[n] = stockActual[k]; }
+  if (!k.startsWith('ALMACEN|')) delete stockActual[k];
+}
+/* Mochila de cada técnico (material asignado), del Excel "Stock Técnico" o escrita a mano:
+   { archivo, emision, cargado, tec: { nombreNormalizado: { nombre, mat: { cod: cantidad } } }, nombres: { cod: descripcion } } */
+let mochilas = leer('consumo.mochilas', null);
 let ultimoCalculo = null;
+const claveTec = s => normal(s).replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
 
 // ---------- fechas ----------
 const diaDe = s => Math.floor(s);
@@ -215,14 +232,14 @@ function desdeHoja(filas, nombreArchivo) {
   const cab = filas[iCab].map(normal);
   const col = n => cab.indexOf(n);
   const c = { tec: col('tecnico'), tipo: col('tipo de os'), doc: col('documento'), fec: col('fecha movimiento'),
-              cod: col('codigo unico'), mat: col('material'), ing: col('ingreso'), sal: col('salida') };
+              cod: col('codigo unico'), mat: col('material'), ing: col('ingreso'), sal: col('salida'), serie: col('num. serie') };
   const faltan = Object.entries({ Tecnico: c.tec, 'Fecha Movimiento': c.fec, 'Codigo Unico': c.cod, Material: c.mat, Salida: c.sal })
     .filter(([, i]) => i < 0).map(([n]) => n);
   if (faltan.length) throw new Error('Faltan columnas: ' + faltan.join(', ') + '.');
   const idx = { tec: new Map(), mat: new Map(), tipo: new Map(), os: new Map() };
   const nombres = new Map();
   const id = (t, v) => { if (!idx[t].has(v)) idx[t].set(v, idx[t].size); return idx[t].get(v); };
-  const salida = [];
+  const salida = [], claves = [], vistas = new Map();
   let saltadas = 0;
   for (let i = iCab + 1; i < filas.length; i++) {
     const f = filas[i];
@@ -233,12 +250,64 @@ function desdeHoja(filas, nombreArchivo) {
     if (!cod || typeof fe !== 'number' || !isFinite(fe)) { if (cod || fe) saltadas++; continue; }
     if (!nombres.has(cod)) nombres.set(cod, String(f[c.mat] ?? '').trim());
     const cant = (parseFloat(f[c.sal]) || 0) - (c.ing >= 0 ? (parseFloat(f[c.ing]) || 0) : 0);
-    salida.push([id('tec', String(f[c.tec] ?? '').trim()), id('mat', cod), id('tipo', c.tipo >= 0 ? String(f[c.tipo] ?? '').trim() : '-'),
-                 Math.round(fe * 1e5) / 1e5, Math.round(cant * 1000) / 1000, id('os', c.doc >= 0 ? String(f[c.doc] ?? '').trim() : String(i))]);
+    const tec = String(f[c.tec] ?? '').trim(), doc = c.doc >= 0 ? String(f[c.doc] ?? '').trim() : '';
+    const serie = c.serie >= 0 ? String(f[c.serie] ?? '').trim() : '';
+    salida.push([id('tec', tec), id('mat', cod), id('tipo', c.tipo >= 0 ? String(f[c.tipo] ?? '').trim() : '-'),
+                 Math.round(fe * 1e5) / 1e5, Math.round(cant * 1000) / 1000, id('os', doc || 'fila ' + i)]);
+    claves.push(claveMovimiento(vistas, tec, doc, cod, fe, serie, cant));
   }
   if (!salida.length) throw new Error('El archivo no tiene movimientos con código y fecha válidos.');
   return { tecnicos: [...idx.tec.keys()], materiales: [...idx.mat.keys()].map(k => [k, nombres.get(k)]),
-           tipos: [...idx.tipo.keys()], filas: salida, origen: nombreArchivo, saltadas };
+           tipos: [...idx.tipo.keys()], osNombres: [...idx.os.keys()], filas: salida, claves, origen: nombreArchivo, saltadas };
+}
+
+/* Identifica un movimiento: técnico, documento, código, segundo exacto, serie y cantidad.
+   Si un mismo archivo trae filas idénticas, se numeran (#1, #2...) para no perder ninguna;
+   al volver a cargar ese archivo o uno que se superpone, esas mismas claves ya existen y no se suman.
+   preparar.py calcula la misma clave para la data incluida. */
+function claveMovimiento(vistas, tec, doc, cod, fe, serie, cant) {
+  const base = [tec, doc, cod, Math.floor(fe * 86400 + 0.5), serie, Math.floor(cant * 1000 + 0.5)].join('|');
+  const n = (vistas.get(base) || 0) + 1;
+  vistas.set(base, n);
+  return base + '#' + n;
+}
+
+/* Suma "nuevo" a "base" sin repetir movimientos. Devuelve la data acumulada y cuántas filas entraron. */
+function fusionar(base, nuevo) {
+  const hoy = new Date().toLocaleString('es-PE');
+  const rango = rangoDe(nuevo.filas);
+  if (!base) {
+    const d = { tecnicos: [...nuevo.tecnicos], materiales: nuevo.materiales.map(m => [...m]), tipos: [...nuevo.tipos],
+                osNombres: [...nuevo.osNombres], filas: nuevo.filas.map(f => [...f]), claves: [...nuevo.claves], cargas: [] };
+    d.cargas.push({ archivo: nuevo.origen, cuando: hoy, leidas: nuevo.filas.length, nuevas: nuevo.filas.length, repetidas: 0, ...rango });
+    return { d, nuevas: nuevo.filas.length, repetidas: 0 };
+  }
+  const d = { tecnicos: [...base.tecnicos], materiales: base.materiales.map(m => [...m]), tipos: [...base.tipos],
+              osNombres: [...base.osNombres], filas: base.filas.map(f => [...f]), claves: [...base.claves], cargas: [...(base.cargas || [])] };
+  const indice = lista => new Map(lista.map((v, i) => [v, i]));
+  const iTec = indice(d.tecnicos), iTipo = indice(d.tipos), iOs = indice(d.osNombres), iMat = indice(d.materiales.map(m => m[0]));
+  const poner = (mapa, lista, valor) => { if (!mapa.has(valor)) { mapa.set(valor, lista.length); lista.push(valor); } return mapa.get(valor); };
+  const ya = new Set(d.claves);
+  let nuevas = 0, repetidas = 0;
+  nuevo.filas.forEach((f, i) => {
+    const k = nuevo.claves[i];
+    if (ya.has(k)) { repetidas++; return; }
+    ya.add(k);
+    const [cod, nombre] = nuevo.materiales[f[1]];
+    if (!iMat.has(cod)) { iMat.set(cod, d.materiales.length); d.materiales.push([cod, nombre]); }
+    d.filas.push([poner(iTec, d.tecnicos, nuevo.tecnicos[f[0]]), iMat.get(cod), poner(iTipo, d.tipos, nuevo.tipos[f[2]]),
+                  f[3], f[4], poner(iOs, d.osNombres, nuevo.osNombres[f[5]])]);
+    d.claves.push(k);
+    nuevas++;
+  });
+  d.cargas.push({ archivo: nuevo.origen, cuando: hoy, leidas: nuevo.filas.length, nuevas, repetidas, ...rango });
+  return { d, nuevas, repetidas };
+}
+
+function rangoDe(filas) {
+  let a = Infinity, b = -Infinity;
+  for (const f of filas) { if (f[3] < a) a = f[3]; if (f[3] > b) b = f[3]; }
+  return { desde: a, hasta: b };
 }
 
 // ---------- filtros ----------
@@ -254,7 +323,28 @@ function llenarFiltros() {
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const techoSeguro = x => Math.ceil(x - 1e-9);
-const claveStock = cod => (estado.tec < 0 ? 'TODOS' : D.tecnicos[estado.tec]) + '|' + cod;
+const claveStock = cod => 'ALMACEN|' + cod;
+
+/* Mochila del filtro actual: la del técnico elegido o la suma de todas las mochilas. */
+function mochilaDe(cod) {
+  if (!mochilas) return null;
+  if (estado.tec >= 0) {
+    const t = mochilas.tec[claveTec(D.tecnicos[estado.tec])];
+    return t && cod in t.mat ? t.mat[cod] : (t ? 0 : null);
+  }
+  let s = 0, hay = false;
+  for (const t of Object.values(mochilas.tec)) if (cod in t.mat) { s += t.mat[cod]; hay = true; }
+  return hay ? s : 0;
+}
+
+function codigosConStock() {
+  const s = new Set(Object.keys(stockActual).filter(k => stockActual[k] > 0).map(k => k.slice(8)));
+  if (mochilas) {
+    const tecs = estado.tec >= 0 ? [mochilas.tec[claveTec(D.tecnicos[estado.tec])]].filter(Boolean) : Object.values(mochilas.tec);
+    for (const t of tecs) for (const [c, n] of Object.entries(t.mat)) if (n) s.add(c);
+  }
+  return s;
+}
 
 // ---------- cálculo ----------
 function calcular() {
@@ -280,15 +370,36 @@ function calcular() {
   const diasPeriodo = isFinite(dMin) ? dMax - dMin + 1 : 0;
   const dias = manual > 0 ? manual : diasPeriodo;
   const filas = [];
+  const fila = (mi, cod, nombre, consumo, nOs) => {
+    const prom = dias > 0 ? consumo / dias : 0;
+    const cobN = techoSeguro(prom * cob), segN = techoSeguro(prom * seg), total = cobN + segN;
+    const st = stockActual[claveStock(cod)];
+    const almacen = typeof st === 'number' && isFinite(st) ? st : null;
+    const mochila = mochilaDe(cod);
+    const hayStock = almacen != null || mochila != null;
+    // Con un técnico elegido, lo que falta es lo que hay que entregarle (su requerido menos su mochila).
+    // Con todos, lo que falta es lo que hay que comprar (requerido menos mochilas más almacén).
+    const disponible = estado.tec >= 0 ? (mochila ?? 0) : (mochila ?? 0) + (almacen ?? 0);
+    const tieneBase = estado.tec >= 0 ? mochila != null : hayStock;
+    filas.push({ mi, cod, nombre, consumo: Math.round(consumo * 1000) / 1000, os: nOs, prom, cob: cobN, seg: segN, total,
+                 mochila, stock: almacen, stockTotal: hayStock ? (mochila ?? 0) + (almacen ?? 0) : null,
+                 pedir: tieneBase ? Math.max(0, total - disponible) : null, porOs: nOs ? consumo / nOs : 0 });
+  };
+  const vistos = new Set();
   for (const [mi, m] of porMat) {
     if (Math.abs(m.consumo) < 1e-9) continue;
     const [cod, nombre] = D.materiales[mi];
-    const prom = dias > 0 ? m.consumo / dias : 0;
-    const cobN = techoSeguro(prom * cob), segN = techoSeguro(prom * seg), total = cobN + segN;
-    const st = stockActual[claveStock(cod)];
-    const tieneStock = typeof st === 'number' && isFinite(st);
-    filas.push({ mi, cod, nombre, consumo: Math.round(m.consumo * 1000) / 1000, os: m.os.size, prom, cob: cobN, seg: segN, total,
-                 stock: tieneStock ? st : null, pedir: tieneStock ? Math.max(0, total - st) : null, porOs: m.consumo / m.os.size });
+    vistos.add(cod);
+    fila(mi, cod, nombre, m.consumo, m.os.size);
+  }
+  // Materiales con stock (mochila o almacén) pero sin consumo en el periodo
+  const iMat = new Map(D.materiales.map((m, i) => [m[0], i]));
+  let extra = 0;
+  for (const cod of codigosConStock()) {
+    if (vistos.has(cod)) continue;
+    const mi = iMat.has(cod) ? iMat.get(cod) : -1 - (extra++);
+    const nombre = iMat.has(cod) ? D.materiales[iMat.get(cod)][1] : (mochilas && mochilas.nombres[cod]) || cod;
+    fila(mi, cod, nombre, 0, 0);
   }
   return { filas, cob, seg, dias, diasPeriodo, manual: manual > 0, dMin, dMax, os: os.size, osTodas: osTodas.size, tecs: tecs.size, enMes };
 }
@@ -317,16 +428,19 @@ function pintar() {
   $('kOsN').textContent = estado.tec < 0 ? nombreMes(estado.mes) : `de ${nf0.format(r.osTodas)} del equipo`;
   $('kTec').textContent = nf0.format(r.tecs);
   $('kTecN').textContent = estado.tec < 0 ? `de ${D.tecnicos.length} en la data` : nombreTec;
-  $('kMat').textContent = nf0.format(r.filas.length);
+  $('kMat').textContent = nf0.format(r.filas.filter(f => f.consumo).length);
   $('kMatN').textContent = `de ${D.materiales.length} códigos en la data`;
   $('kDias').textContent = nf0.format(r.dias);
   $('kDiasN').textContent = r.manual ? `fijado a mano (data: ${r.diasPeriodo})` : (r.diasPeriodo ? `${textoDia(r.dMin)} al ${textoDia(r.dMax)}` : 'sin movimientos');
-  const conStock = r.filas.filter(f => f.stock != null);
+  const conStock = r.filas.filter(f => f.pedir != null && f.consumo);
   const porPedir = conStock.filter(f => f.pedir > 0).length;
+  const deTec = estado.tec >= 0;
+  document.querySelector('#kPedir').previousElementSibling.textContent = deTec ? 'Materiales por entregar' : 'Materiales por pedir';
   $('kPedir').textContent = conStock.length ? nf0.format(porPedir) : '–';
-  $('kPedirN').textContent = conStock.length ? `de ${conStock.length} con stock cargado` : 'escribe el stock actual en la tabla';
+  $('kPedirN').textContent = conStock.length ? `de ${conStock.length} con stock cargado` : (deTec ? 'carga o escribe su mochila' : 'carga las mochilas o escribe el almacén');
 
-  $('leyenda').textContent = `${nombreTec} · ${nombreMes(estado.mes)} · promedio sobre ${r.dias} días · requerido = ${r.cob} + ${r.seg} días`;
+  $('leyenda').textContent = `${nombreTec} · ${nombreMes(estado.mes)} · promedio sobre ${r.dias} días · requerido = ${r.cob} + ${r.seg} días · ` +
+    (deTec ? 'falta = requerido − mochila del técnico' : 'falta = requerido − (mochilas + almacén)');
 
   if (estado.vista === 'stock') pintarStock(r, filas); else pintarMatriz(r, q);
   pintarDetalle(r);
@@ -336,7 +450,8 @@ const columnasStock = [
   { k: 'cod', t: 'Código', izq: true }, { k: 'nombre', t: 'Material', izq: true },
   { k: 'os', t: 'Órdenes' }, { k: 'consumo', t: 'Consumo del mes' }, { k: 'prom', t: 'Promedio diario' },
   { k: 'cob', t: 'Stock cobertura', dias: 'cob' }, { k: 'seg', t: 'Stock seguridad', dias: 'seg' },
-  { k: 'total', t: 'Stock requerido', dias: 'tot' }, { k: 'stock', t: 'Stock actual' }, { k: 'pedir', t: 'A pedir' }
+  { k: 'total', t: 'Stock requerido', dias: 'tot' }, { k: 'mochila', t: 'Stock técnico (mochila)' }, { k: 'stock', t: 'Stock almacén' },
+  { k: 'stockTotal', t: 'Stock total' }, { k: 'pedir', t: 'A pedir' }
 ];
 
 function pintarStock(r, filas) {
@@ -344,17 +459,24 @@ function pintarStock(r, filas) {
   thead.innerHTML = '<tr>' + columnasStock.map(c => {
     const dias = c.dias ? `<span class="dias">${c.dias === 'cob' ? r.cob : c.dias === 'seg' ? r.seg : r.cob + r.seg} días</span>` : '';
     const sort = estado.orden.col === c.k ? (estado.orden.dir > 0 ? 'ascending' : 'descending') : 'none';
-    return `<th class="${c.izq ? 'izq' : ''}" data-k="${c.k}" tabindex="0" aria-sort="${sort}">${c.t}${dias}</th>`;
+    const titulo = c.k === 'pedir' && estado.tec >= 0 ? 'Falta entregar' : c.t;
+    return `<th class="${c.izq ? 'izq' : ''}" data-k="${c.k}" tabindex="0" aria-sort="${sort}">${titulo}${dias}</th>`;
   }).join('') + '</tr>';
-  if (!filas.length) { tbody.innerHTML = `<tr><td colspan="10" class="vacio">No hay consumo con estos filtros.</td></tr>`; return; }
+  if (!filas.length) { tbody.innerHTML = `<tr><td colspan="${columnasStock.length}" class="vacio">No hay consumo con estos filtros.</td></tr>`; return; }
+  const deTec = estado.tec >= 0;
   tbody.innerHTML = filas.map(f => {
     const chip = f.pedir == null ? '<span class="chip nada">–</span>'
       : f.pedir > 0 ? `<span class="chip pedir">${nf0.format(f.pedir)}</span>` : '<span class="chip ok">Cubierto</span>';
+    const mochila = deTec
+      ? `<input type="number" min="0" step="any" data-mochila="${esc(f.cod)}" value="${f.mochila ?? ''}" placeholder="—" aria-label="Mochila de ${esc(f.nombre)}">`
+      : `<input type="text" readonly tabindex="-1" value="${f.mochila == null ? '—' : nf0.format(f.mochila)}" title="Suma de las mochilas. Elige un técnico para editar la suya." aria-label="Suma de mochilas de ${esc(f.nombre)}">`;
     return `<tr data-mi="${f.mi}" tabindex="0" class="${f.mi === estado.sel ? 'elegida' : ''}">
       <td class="izq cod">${esc(f.cod)}</td><td class="izq nom">${esc(f.nombre)}</td>
-      <td>${nf0.format(f.os)}</td><td>${nf0.format(f.consumo)}</td><td>${nf2.format(f.prom)}</td>
+      <td class="${f.os ? '' : 'suave'}">${nf0.format(f.os)}</td><td class="${f.consumo ? '' : 'suave'}">${nf0.format(f.consumo)}</td><td>${nf2.format(f.prom)}</td>
       <td>${nf0.format(f.cob)}</td><td>${nf0.format(f.seg)}</td><td class="total">${nf0.format(f.total)}</td>
-      <td><input type="number" min="0" step="1" data-cod="${esc(f.cod)}" value="${f.stock ?? ''}" placeholder="—" aria-label="Stock actual de ${esc(f.nombre)}"></td>
+      <td>${mochila}</td>
+      <td><input type="number" min="0" step="any" data-cod="${esc(f.cod)}" value="${f.stock ?? ''}" placeholder="—" aria-label="Stock de almacén de ${esc(f.nombre)}"></td>
+      <td class="total">${f.stockTotal == null ? '–' : nf0.format(f.stockTotal)}</td>
       <td>${chip}</td></tr>`;
   }).join('');
 }
@@ -429,49 +551,135 @@ function pintarDetalle(r) {
 function niceStep(x) { const p = Math.pow(10, Math.floor(Math.log10(x || 1))); const n = x / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
 
 // ---------- carga ----------
-function usarDatos(d, nota) {
-  D = preparar(d);
+const CLAVE_DATA = 'consumo.acumulado';
+let acumulado = null;   // data acumulada de todas las cargas (sin repetidos)
+
+const fechaCorta = s => `${textoDia(diaDe(s))}/${fechaDe(s).getUTCFullYear()}`;
+
+function usarDatos(d) {
+  D = preparar(JSON.parse(JSON.stringify(d)));
+  const mesAntes = estado.mes;
   llenarFiltros();
-  $('estadoCarga').innerHTML = nota;
+  if (mesAntes && D.meses.includes(mesAntes)) { estado.mes = mesAntes; $('fMes').value = String(mesAntes); }
+  pintarResumenCarga();
+  pintarEstadoStock();
   pintar();
 }
 
-function textoOrigen(d, propia) {
-  const ms = d.filas.map(f => f[3]);
-  let a = Infinity, b = -Infinity; for (const m of ms) { if (m < a) a = m; if (m > b) b = m; }
-  const rango = `${textoDia(diaDe(a))}/${fechaDe(a).getUTCFullYear()} al ${textoDia(diaDe(b))}/${fechaDe(b).getUTCFullYear()}`;
-  return `${propia ? 'Archivo cargado' : 'Data incluida'}: <b>${esc(d.origen || 'Parte Diario')}</b> · ${nf0.format(d.filas.length)} movimientos · ${d.tecnicos.length} técnicos · ${d.materiales.length} materiales · ${rango}` +
-    (d.saltadas ? ` · ${d.saltadas} filas sin código o fecha válida se omitieron` : '');
+function pintarResumenCarga(aviso) {
+  const d = acumulado;
+  if (!d) return;
+  const r = rangoDe(d.filas);
+  $('estadoCarga').innerHTML = (aviso ? aviso + '<br>' : '') +
+    `<b>Data acumulada:</b> ${nf0.format(d.filas.length)} movimientos · ${d.tecnicos.length} técnicos · ${d.materiales.length} materiales · del ${fechaCorta(r.desde)} al ${fechaCorta(r.hasta)} · ${d.cargas.length} ${d.cargas.length === 1 ? 'carga' : 'cargas'}`;
+  const filas = [...d.cargas].reverse().map(c => `<tr><td class="izq">${esc(c.cuando)}</td><td class="izq nom">${esc(c.archivo)}</td>
+    <td>${isFinite(c.desde) ? fechaCorta(c.desde) + ' al ' + fechaCorta(c.hasta) : '–'}</td><td>${nf0.format(c.leidas)}</td>
+    <td>${nf0.format(c.nuevas)}</td><td>${c.repetidas ? nf0.format(c.repetidas) : '–'}</td></tr>`).join('');
+  $('historial').innerHTML = `<summary>Historial de cargas (${d.cargas.length})</summary><div class="tabla-caja"><table>
+    <thead><tr><th class="izq">Cargado</th><th class="izq">Archivo</th><th>Periodo del archivo</th><th>Filas leídas</th><th>Nuevas</th><th>Ya estaban</th></tr></thead>
+    <tbody>${filas}</tbody></table></div>`;
+  $('historial').classList.remove('oculto');
+  $('btnBorrar').classList.remove('oculto');
 }
 
-async function cargarArchivo(file) {
-  if (!file) return;
-  $('estadoCarga').textContent = 'Leyendo ' + file.name + '…';
-  try {
-    if (typeof XLSX === 'undefined') throw new Error('No se pudo cargar el lector de Excel. Revisa tu conexión a internet y vuelve a intentar.');
-    const libro = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false });
-    const hoja = libro.Sheets[libro.SheetNames[0]];
-    const filas = XLSX.utils.sheet_to_json(hoja, { header: 1, raw: true, defval: '' });
-    const d = desdeHoja(filas, file.name);
-    guardar('consumo.data', d);
-    usarDatos(d, textoOrigen(d, true));
-    $('btnOriginal').classList.remove('oculto');
-  } catch (e) {
-    $('estadoCarga').innerHTML = `<span style="color:var(--alerta)">No se pudo leer <b>${esc(file.name)}</b>: ${esc(e.message)}</span>`;
+async function leerFilas(file) {
+  if (typeof XLSX === 'undefined') throw new Error('No se pudo cargar el lector de Excel. Revisa tu conexión a internet y vuelve a intentar.');
+  const libro = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false });
+  const hoja = libro.Sheets[libro.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(hoja, { header: 1, raw: true, defval: '' });
+}
+
+const esStockTecnico = filas => filas.slice(0, 40).some(f => f.some(c => normal(c) === 'codmaterial') && f.some(c => normal(c) === 'asignado'));
+
+/* Excel "Stock Técnico": una fila por técnico y material (los equipos vienen uno por serie).
+   La mochila es la columna Asignado; Recogido son equipos retirados a clientes y no se suma. */
+function desdeStock(filas, nombreArchivo) {
+  const iCab = filas.findIndex(f => f.some(c => normal(c) === 'codmaterial') && f.some(c => normal(c) === 'asignado'));
+  const cab = filas[iCab].map(normal), col = n => cab.indexOf(n);
+  const c = { tec: col('tecnico'), cod: col('codmaterial'), desc: col('descmaterial'), asig: col('asignado') };
+  if (c.tec < 0) throw new Error('Falta la columna Tecnico en el Stock Técnico.');
+  const emision = filas.slice(0, iCab).flat().map(String).find(t => /^emisi[oó]n/i.test(t.trim()));
+  const res = { archivo: nombreArchivo, emision: emision ? emision.replace(/^emisi[oó]n:?\s*/i, '').trim() : null,
+                cargado: new Date().toLocaleString('es-PE'), tec: {}, nombres: {} };
+  let n = 0;
+  for (let i = iCab + 1; i < filas.length; i++) {
+    const f = filas[i], nombre = String(f[c.tec] ?? '').trim(), cod = String(f[c.cod] ?? '').trim();
+    if (!nombre || !cod) continue;
+    const kt = claveTec(nombre);
+    const t = res.tec[kt] || (res.tec[kt] = { nombre, mat: {} });
+    t.mat[cod] = Math.round(((t.mat[cod] || 0) + (parseFloat(f[c.asig]) || 0)) * 1000) / 1000;
+    if (!(cod in res.nombres) && c.desc >= 0) res.nombres[cod] = String(f[c.desc] ?? '').split('//')[0].trim();
+    n++;
   }
+  if (!n) throw new Error('El Stock Técnico no tiene filas con técnico y código de material.');
+  res.filas = n;
+  return res;
+}
+
+function pintarEstadoStock(aviso) {
+  const el = $('estadoStock');
+  if (!mochilas) return;
+  const tecs = Object.values(mochilas.tec);
+  const enParte = D ? new Set(D.tecnicos.map(claveTec)) : new Set();
+  const sinCruce = D ? tecs.filter(t => !enParte.has(claveTec(t.nombre))).length : 0;
+  el.innerHTML = (aviso ? aviso + '<br>' : '') + `<b>Mochilas:</b> ` +
+    (mochilas.archivo ? `${esc(mochilas.archivo)}${mochilas.emision ? ' · emisión ' + esc(mochilas.emision) : ''} · cargado ${esc(mochilas.cargado)}` : 'escritas a mano') +
+    ` · ${tecs.length} técnicos` + (mochilas.editado ? ` · última edición a mano ${esc(mochilas.editado)}` : '') +
+    (sinCruce ? ` · ${sinCruce} técnicos del stock no tienen consumo en el Parte Diario (se suman en "Todos")` : '');
+}
+
+async function cargarArchivos(lista) {
+  const archivos = [...(lista || [])];
+  if (!archivos.length) return;
+  const avisos = [];
+  let cambio = false;
+  for (const file of archivos) {
+    $('estadoCarga').textContent = 'Leyendo ' + file.name + '…';
+    try {
+      const filasExcel = await leerFilas(file);
+      if (esStockTecnico(filasExcel)) {
+        mochilas = desdeStock(filasExcel, file.name);
+        const ok = guardar('consumo.mochilas', mochilas);
+        pintarEstadoStock(`<span style="color:var(--bien)"><b>${esc(file.name)}</b>: stock de ${Object.keys(mochilas.tec).length} técnicos cargado (${nf0.format(mochilas.filas)} filas). Reemplaza a las mochilas anteriores.</span>` +
+          (ok ? '' : '<br><span style="color:var(--alerta)">Este navegador no dejó guardar las mochilas: se perderán al cerrar la página.</span>'));
+        if (D) pintar();
+        continue;
+      }
+      const nuevo = desdeHoja(filasExcel, file.name);
+      const { d, nuevas, repetidas } = fusionar(acumulado, nuevo);
+      const guardado = guardar(CLAVE_DATA, d);
+      acumulado = d; cambio = true;
+      avisos.push(`<span style="color:var(--bien)"><b>${esc(file.name)}</b>: ${nf0.format(nuevas)} movimientos nuevos` +
+        (repetidas ? `, ${nf0.format(repetidas)} ya estaban y no se duplicaron` : '') +
+        (nuevo.saltadas ? `, ${nf0.format(nuevo.saltadas)} filas sin código o fecha se omitieron` : '') + '.</span>');
+      if (!guardado) avisos.push('<span style="color:var(--alerta)">Este navegador no dejó guardar la data (sin espacio o en modo privado): se suma mientras la página siga abierta, pero se perderá al cerrarla.</span>');
+    } catch (e) {
+      avisos.push(`<span style="color:var(--alerta)">No se pudo cargar <b>${esc(file.name)}</b>: ${esc(e.message)}</span>`);
+    }
+  }
+  if (cambio) usarDatos(acumulado);
+  if (acumulado) pintarResumenCarga(avisos.join('<br>'));
+  else if (avisos.length) $('estadoCarga').innerHTML = avisos.join('<br>');
+  else $('estadoCarga').innerHTML = '<b>Aún no hay Parte Diario.</b> Carga el Excel del Parte Diario para ver el consumo y el stock requerido.';
 }
 
 $('btnCargar').addEventListener('click', () => $('archivo').click());
-$('archivo').addEventListener('change', e => { cargarArchivo(e.target.files[0]); e.target.value = ''; });
+$('archivo').addEventListener('change', e => { cargarArchivos(e.target.files); e.target.value = ''; });
 const zona = $('zonaCarga');
 ['dragenter', 'dragover'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); zona.classList.add('arrastre'); }));
 ['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === 'drop' || !e.relatedTarget) zona.classList.remove('arrastre'); }));
-document.addEventListener('drop', e => cargarArchivo(e.dataTransfer.files[0]));
-$('btnOriginal').addEventListener('click', () => {
-  try { localStorage.removeItem('consumo.data'); } catch (e) {}
-  if (!DATOS_INCLUIDOS) { location.reload(); return; }
-  $('btnOriginal').classList.add('oculto');
-  usarDatos(JSON.parse(JSON.stringify(DATOS_INCLUIDOS)), textoOrigen(DATOS_INCLUIDOS, false));
+document.addEventListener('drop', e => cargarArchivos(e.dataTransfer.files));
+let borrarPendiente = null;
+$('btnBorrar').addEventListener('click', () => {
+  const b = $('btnBorrar');
+  if (!borrarPendiente) {
+    b.textContent = '¿Borrar todo? Pulsa otra vez';
+    borrarPendiente = setTimeout(() => { borrarPendiente = null; b.textContent = 'Borrar data acumulada'; }, 4000);
+    return;
+  }
+  clearTimeout(borrarPendiente); borrarPendiente = null;
+  try { localStorage.removeItem(CLAVE_DATA); } catch (e) {}
+  location.reload();
 });
 
 // ---------- eventos ----------
@@ -496,10 +704,20 @@ $('tStock').tBodies[0].addEventListener('click', elegir);
 $('tStock').tBodies[0].addEventListener('keydown', e => { if (e.key === 'Enter' && !e.target.closest('input')) elegir(e); });
 $('tMatriz').tBodies[0].addEventListener('click', elegir);
 $('tStock').tBodies[0].addEventListener('change', e => {
-  const inp = e.target.closest('input[data-cod]'); if (!inp) return;
-  const k = claveStock(inp.dataset.cod), v = parseFloat(inp.value);
-  if (isFinite(v) && v >= 0) stockActual[k] = v; else delete stockActual[k];
-  guardar('consumo.stock', stockActual);
+  const alm = e.target.closest('input[data-cod]'), moc = e.target.closest('input[data-mochila]');
+  if (alm) {
+    const k = claveStock(alm.dataset.cod), v = parseFloat(alm.value);
+    if (isFinite(v) && v >= 0) stockActual[k] = v; else delete stockActual[k];
+    guardar('consumo.stock', stockActual);
+  } else if (moc && estado.tec >= 0) {
+    const nombre = D.tecnicos[estado.tec], kt = claveTec(nombre), v = parseFloat(moc.value);
+    if (!mochilas) mochilas = { archivo: null, emision: null, cargado: null, tec: {}, nombres: {} };
+    const t = mochilas.tec[kt] || (mochilas.tec[kt] = { nombre, mat: {} });
+    if (isFinite(v) && v >= 0) t.mat[moc.dataset.mochila] = v; else delete t.mat[moc.dataset.mochila];
+    mochilas.editado = new Date().toLocaleString('es-PE');
+    guardar('consumo.mochilas', mochilas);
+    pintarEstadoStock();
+  } else return;
   pintar();
 });
 
@@ -526,14 +744,14 @@ $('btnCopiar').addEventListener('click', async () => {
 
 // ---------- inicio ----------
 (function inicio() {
-  if (!DATOS_INCLUIDOS) $('btnOriginal').textContent = 'Quitar la data cargada';
-  const propia = leer('consumo.data', null);
-  if (propia && propia.filas && propia.filas.length) {
-    usarDatos(propia, textoOrigen(propia, true));
-    $('btnOriginal').classList.remove('oculto');
-  } else if (DATOS_INCLUIDOS) {
-    usarDatos(JSON.parse(JSON.stringify(DATOS_INCLUIDOS)), textoOrigen(DATOS_INCLUIDOS, false));
+  try { localStorage.removeItem('consumo.data'); } catch (e) {}   // formato anterior, sin claves
+  const guardada = leer(CLAVE_DATA, null);
+  if (guardada && guardada.filas && guardada.claves && guardada.filas.length === guardada.claves.length) acumulado = guardada;
+  else if (DATOS_INCLUIDOS) acumulado = fusionar(null, { ...DATOS_INCLUIDOS, origen: (DATOS_INCLUIDOS.origen || 'Parte Diario') + ' (data incluida)' }).d;
+  if (acumulado) {
+    usarDatos(acumulado);
   } else {
+    pintarEstadoStock();
     $('estadoCarga').innerHTML = '<b>Aún no hay data.</b> Carga el Excel del Parte Diario exportado del sistema. El archivo se lee en tu navegador y no se sube a ningún servidor.';
     $('tStock').tBodies[0].innerHTML = '<tr><td class="vacio">Carga el Excel del Parte Diario (botón de arriba o arrastrándolo a la página) para ver el consumo de cada material y el stock requerido.</td></tr>';
     $('detalle').innerHTML = '<div class="vacio">Aquí verás el consumo diario y por técnico del material que elijas.</div>';
