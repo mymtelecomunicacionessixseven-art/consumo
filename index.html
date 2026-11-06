@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consumo y Stock de Materiales</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Plan: tablero de almacén. Barra de filtros arriba, cifras clave, tabla de stock como pieza central,
+   panel de detalle del material a la derecha. Tinta azul marino, acento ámbar de etiqueta de almacén. */
+:root {
+  --fondo: #f3f4f7;
+  --papel: #ffffff;
+  --tinta: #17213a;
+  --suave: #5b6478;
+  --linea: #dde1ea;
+  --acento: #d98a00;
+  --acento-suave: #fff3dc;
+  --marca: #1f3f7f;
+  --bien: #1d7a4a;
+  --bien-suave: #e2f4ea;
+  --alerta: #b4322a;
+  --alerta-suave: #fbe6e4;
+  --fila: #f8f9fb;
+  --f-display: "Barlow Condensed", "Arial Narrow", Arial, sans-serif;
+  --f-cuerpo: "IBM Plex Sans", Arial, sans-serif;
+  --f-mono: "IBM Plex Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --fondo: #0f1422; --papel: #171e30; --tinta: #e6e9f2; --suave: #9aa3b8; --linea: #2a3349;
+    --acento: #f0a52a; --acento-suave: #3a2c10; --marca: #8fb0f0; --bien: #5cc98d; --bien-suave: #143022;
+    --alerta: #f08a80; --alerta-suave: #3b1a18; --fila: #1b2337; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --fondo: #0f1422; --papel: #171e30; --tinta: #e6e9f2; --suave: #9aa3b8; --linea: #2a3349;
+  --acento: #f0a52a; --acento-suave: #3a2c10; --marca: #8fb0f0; --bien: #5cc98d; --bien-suave: #143022;
+  --alerta: #f08a80; --alerta-suave: #3b1a18; --fila: #1b2337; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--fondo); color: var(--tinta); font: 14px/1.45 var(--f-cuerpo); }
+.envoltura { max-width: 1440px; margin: 0 auto; padding: 20px 20px 48px; display: grid; gap: 16px; }
+h1, h2 { font-family: var(--f-display); letter-spacing: .01em; text-wrap: balance; margin: 0; }
+h1 { font-size: 30px; line-height: 1.1; }
+h2 { font-size: 20px; }
+.cabecera { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+.cabecera p { margin: 4px 0 0; color: var(--suave); }
+.etiqueta { display: inline-block; font: 600 11px/1 var(--f-cuerpo); text-transform: uppercase; letter-spacing: .08em; color: var(--suave); }
+.panel { background: var(--papel); border: 1px solid var(--linea); border-radius: 8px; }
+.carga { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 14px; border-style: dashed; }
+.carga.arrastre { border-color: var(--acento); background: var(--acento-suave); }
+.carga .estado { flex: 1 1 260px; color: var(--suave); }
+.carga .estado b { color: var(--tinta); font-weight: 600; }
+.boton { font: 600 13px/1 var(--f-cuerpo); padding: 9px 14px; border-radius: 6px; border: 1px solid var(--marca); background: var(--marca); color: var(--papel); cursor: pointer; }
+.boton.secundario { background: transparent; color: var(--marca); }
+.boton:focus-visible, select:focus-visible, input:focus-visible, th:focus-visible, tr:focus-visible, .pestana:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+.filtros { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; padding: 14px; }
+.filtros label { display: grid; gap: 5px; }
+.filtros .ancho { grid-column: span 2; }
+select, input[type="number"], input[type="search"] { font: 14px var(--f-cuerpo); color: var(--tinta); background: var(--papel); border: 1px solid var(--linea); border-radius: 6px; padding: 7px 9px; width: 100%; }
+.filtros input.param { background: var(--acento-suave); border-color: var(--acento); }
+.cifras { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.cifra { padding: 12px 14px; display: grid; gap: 2px; }
+.cifra strong { font: 700 30px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
+.cifra span.nota { color: var(--suave); font-size: 12px; }
+.cuerpo { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .cuerpo { grid-template-columns: 1fr; } }
+.pestanas { display: flex; gap: 4px; padding: 10px 12px 0; border-bottom: 1px solid var(--linea); flex-wrap: wrap; }
+.pestana { font: 600 14px var(--f-cuerpo); padding: 8px 12px; border: 0; background: none; color: var(--suave); border-bottom: 3px solid transparent; cursor: pointer; }
+.pestana[aria-selected="true"] { color: var(--tinta); border-bottom-color: var(--acento); }
+.barra-tabla { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; }
+.barra-tabla .leyenda { color: var(--suave); font-size: 12px; }
+.tabla-caja { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--linea); text-align: right; white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--papel); font: 600 12px/1.25 var(--f-cuerpo); color: var(--suave); cursor: pointer; user-select: none; white-space: normal; vertical-align: bottom; }
+th.izq, td.izq { text-align: left; }
+th .dias { display: block; font-weight: 400; }
+th[aria-sort="ascending"]::after { content: " ▲"; color: var(--acento); }
+th[aria-sort="descending"]::after { content: " ▼"; color: var(--acento); }
+tbody tr { cursor: pointer; }
+tbody tr:nth-child(even) { background: var(--fila); }
+tbody tr.elegida { box-shadow: inset 4px 0 0 var(--acento); background: var(--acento-suave); }
+td.cod { font: 12px var(--f-mono); color: var(--suave); }
+td.nom { white-space: normal; min-width: 260px; max-width: 420px; }
+td.total { font-weight: 600; }
+td input { width: 96px; text-align: right; padding: 4px 6px; font: 13px var(--f-cuerpo); }
+.chip { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.chip.pedir { background: var(--alerta-suave); color: var(--alerta); }
+.chip.ok { background: var(--bien-suave); color: var(--bien); }
+.chip.nada { color: var(--suave); font-weight: 400; }
+.detalle { padding: 14px; display: grid; gap: 14px; position: sticky; top: 12px; }
+.detalle .nombre { font-weight: 600; }
+.detalle .cod { font: 12px var(--f-mono); color: var(--suave); }
+.mini { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mini div { background: var(--fila); border-radius: 6px; padding: 8px 10px; }
+.mini b { display: block; font: 700 20px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
+.grafico svg { width: 100%; height: auto; display: block; }
+.barras { display: grid; gap: 4px; }
+.barra { display: grid; grid-template-columns: 130px 1fr 64px; gap: 8px; align-items: center; font-size: 12px; }
+.barra .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.barra .t { background: var(--fila); border-radius: 3px; height: 12px; }
+.barra .t i { display: block; height: 100%; border-radius: 3px; background: var(--marca); opacity: .75; }
+.barra.yo .t i { background: var(--acento); opacity: 1; }
+.barra.yo .n { font-weight: 600; }
+.barra .v { text-align: right; font-variant-numeric: tabular-nums; }
+.vacio { padding: 32px; text-align: center; color: var(--suave); }
+.aviso { padding: 10px 14px; border-radius: 6px; background: var(--acento-suave); color: var(--tinta); font-size: 13px; }
+.oculto { display: none !important; }
+.matriz td.cero { color: var(--linea); }
+.matriz th { min-width: 84px; }
+@media (max-width: 520px) { .filtros .ancho { grid-column: auto; } .barra { grid-template-columns: 96px 1fr 56px; } }
+@media (prefers-reduced-motion: no-preference) { .barra .t i { transition: width .25s ease; } }
+</style>
+</head>
+<body>
+<div class="envoltura">
+  <header class="cabecera">
+    <div>
+      <span class="etiqueta">MYM Telecomunicaciones · Almacén</span>
+      <h1>Consumo y stock de materiales</h1>
+      <p>Lo que consumen los técnicos en las instalaciones y el stock que debe haber: cobertura más seguridad según el promedio diario.</p>
+    </div>
+  </header>
+
+  <section class="panel carga" id="zonaCarga" aria-label="Cargar data">
+    <div class="estado" id="estadoCarga">Cargando…</div>
+    <input type="file" id="archivo" accept=".xlsx,.xls,.csv" class="oculto">
+    <button class="boton" id="btnCargar" type="button">Cargar Excel del Parte Diario</button>
+    <button class="boton secundario oculto" id="btnOriginal" type="button">Volver a la data incluida</button>
+  </section>
+
+  <section class="panel filtros" aria-label="Filtros">
+    <label class="ancho"><span class="etiqueta">Técnico</span><select id="fTec"></select></label>
+    <label><span class="etiqueta">Mes</span><select id="fMes"></select></label>
+    <label class="ancho"><span class="etiqueta">Tipo de OS</span><select id="fTipo"></select></label>
+    <label><span class="etiqueta">Días de cobertura</span><input class="param" type="number" id="pCob" min="0" max="365" value="15"></label>
+    <label><span class="etiqueta">Días de seguridad</span><input class="param" type="number" id="pSeg" min="0" max="365" value="3"></label>
+    <label><span class="etiqueta">Días para el promedio</span><input class="param" type="number" id="pDias" min="1" max="31" placeholder="auto"></label>
+  </section>
+
+  <section class="cifras" aria-label="Resumen">
+    <div class="panel cifra"><span class="etiqueta">Órdenes atendidas</span><strong id="kOs">–</strong><span class="nota" id="kOsN"></span></div>
+    <div class="panel cifra"><span class="etiqueta">Técnicos con consumo</span><strong id="kTec">–</strong><span class="nota" id="kTecN"></span></div>
+    <div class="panel cifra"><span class="etiqueta">Materiales consumidos</span><strong id="kMat">–</strong><span class="nota" id="kMatN"></span></div>
+    <div class="panel cifra"><span class="etiqueta">Días del periodo</span><strong id="kDias">–</strong><span class="nota" id="kDiasN"></span></div>
+    <div class="panel cifra"><span class="etiqueta">Materiales por pedir</span><strong id="kPedir">–</strong><span class="nota" id="kPedirN"></span></div>
+  </section>
+
+  <div class="cuerpo">
+    <section class="panel" aria-label="Tablas">
+      <div class="pestanas" role="tablist">
+        <button class="pestana" role="tab" id="tabStock" aria-selected="true" type="button">Stock por material</button>
+        <button class="pestana" role="tab" id="tabMatriz" aria-selected="false" type="button">Consumo por técnico</button>
+      </div>
+      <div class="barra-tabla">
+        <input type="search" id="fBusca" placeholder="Buscar material o código" style="max-width:300px" aria-label="Buscar material">
+        <span class="leyenda" id="leyenda"></span>
+        <button class="boton secundario" id="btnCopiar" type="button">Copiar tabla para Excel</button>
+      </div>
+      <div class="tabla-caja" id="cajaStock"><table id="tStock"><thead></thead><tbody></tbody></table></div>
+      <div class="tabla-caja oculto" id="cajaMatriz"><table id="tMatriz" class="matriz"><thead></thead><tbody></tbody></table></div>
+    </section>
+
+    <aside class="panel detalle" id="detalle" aria-label="Detalle del material"></aside>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const DATOS_INCLUIDOS = /*__DATOS__*/null;
+const nf0 = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 0 });
+const nf2 = new Intl.NumberFormat('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const $ = id => document.getElementById(id);
+const guardar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const leer = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+
+let D = null;                 // data activa
+let estado = { tec: -1, mes: null, tipo: -1, busca: '', orden: { col: 'consumo', dir: -1 }, sel: null, vista: 'stock' };
+let stockActual = leer('consumo.stock', {});
+let ultimoCalculo = null;
+
+// ---------- fechas ----------
+const diaDe = s => Math.floor(s);
+const fechaDe = s => new Date(Math.round((s - 25569) * 86400000));
+const mesDe = s => { const f = fechaDe(s); return f.getUTCFullYear() * 100 + f.getUTCMonth() + 1; };
+const nombreMes = m => MESES[m % 100 - 1] + ' ' + Math.floor(m / 100);
+const textoDia = d => { const f = fechaDe(d); return String(f.getUTCDate()).padStart(2, '0') + '/' + String(f.getUTCMonth() + 1).padStart(2, '0'); };
+
+function serialDeTexto(t) {
+  const m = String(t).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!m) return null;
+  const ms = Date.UTC(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+  return ms / 86400000 + 25569;
+}
+
+// ---------- preparar data ----------
+function preparar(d) {
+  d.mesDeFila = d.filas.map(f => mesDe(f[3]));
+  d.meses = [...new Set(d.mesDeFila)].sort((a, b) => b - a);
+  return d;
+}
+
+function normal(s) { return String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+
+function desdeHoja(filas, nombreArchivo) {
+  let iCab = filas.findIndex(f => f.some(c => normal(c) === 'tecnico') && f.some(c => normal(c) === 'material'));
+  if (iCab < 0) throw new Error('No encontré los encabezados "Tecnico" y "Material" en la primera hoja. Revisa que sea el Parte Diario exportado del sistema.');
+  const cab = filas[iCab].map(normal);
+  const col = n => cab.indexOf(n);
+  const c = { tec: col('tecnico'), tipo: col('tipo de os'), doc: col('documento'), fec: col('fecha movimiento'),
+              cod: col('codigo unico'), mat: col('material'), ing: col('ingreso'), sal: col('salida') };
+  const faltan = Object.entries({ Tecnico: c.tec, 'Fecha Movimiento': c.fec, 'Codigo Unico': c.cod, Material: c.mat, Salida: c.sal })
+    .filter(([, i]) => i < 0).map(([n]) => n);
+  if (faltan.length) throw new Error('Faltan columnas: ' + faltan.join(', ') + '.');
+  const idx = { tec: new Map(), mat: new Map(), tipo: new Map(), os: new Map() };
+  const nombres = new Map();
+  const id = (t, v) => { if (!idx[t].has(v)) idx[t].set(v, idx[t].size); return idx[t].get(v); };
+  const salida = [];
+  let saltadas = 0;
+  for (let i = iCab + 1; i < filas.length; i++) {
+    const f = filas[i];
+    const cod = String(f[c.cod] ?? '').trim();
+    let fe = f[c.fec];
+    if (typeof fe === 'string') fe = serialDeTexto(fe);
+    if (fe instanceof Date) fe = fe.getTime() / 86400000 + 25569;
+    if (!cod || typeof fe !== 'number' || !isFinite(fe)) { if (cod || fe) saltadas++; continue; }
+    if (!nombres.has(cod)) nombres.set(cod, String(f[c.mat] ?? '').trim());
+    const cant = (parseFloat(f[c.sal]) || 0) - (c.ing >= 0 ? (parseFloat(f[c.ing]) || 0) : 0);
+    salida.push([id('tec', String(f[c.tec] ?? '').trim()), id('mat', cod), id('tipo', c.tipo >= 0 ? String(f[c.tipo] ?? '').trim() : '-'),
+                 Math.round(fe * 1e5) / 1e5, Math.round(cant * 1000) / 1000, id('os', c.doc >= 0 ? String(f[c.doc] ?? '').trim() : String(i))]);
+  }
+  if (!salida.length) throw new Error('El archivo no tiene movimientos con código y fecha válidos.');
+  return { tecnicos: [...idx.tec.keys()], materiales: [...idx.mat.keys()].map(k => [k, nombres.get(k)]),
+           tipos: [...idx.tipo.keys()], filas: salida, origen: nombreArchivo, saltadas };
+}
+
+// ---------- filtros ----------
+function llenarFiltros() {
+  const ordenTec = D.tecnicos.map((n, i) => [n, i]).sort((a, b) => a[0].localeCompare(b[0], 'es'));
+  $('fTec').innerHTML = '<option value="-1">Todos los técnicos</option>' + ordenTec.map(([n, i]) => `<option value="${i}">${esc(n)}</option>`).join('');
+  $('fMes').innerHTML = D.meses.map(m => `<option value="${m}">${nombreMes(m)}</option>`).join('');
+  const ordenTipo = D.tipos.map((n, i) => [n, i]).sort((a, b) => a[0].localeCompare(b[0], 'es'));
+  $('fTipo').innerHTML = '<option value="-1">Todos los tipos</option>' + ordenTipo.map(([n, i]) => `<option value="${i}">${esc(n)}</option>`).join('');
+  estado.tec = -1; estado.tipo = -1; estado.mes = D.meses[0]; estado.sel = null;
+  $('fTec').value = '-1'; $('fTipo').value = '-1'; $('fMes').value = String(estado.mes);
+}
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const techoSeguro = x => Math.ceil(x - 1e-9);
+const claveStock = cod => (estado.tec < 0 ? 'TODOS' : D.tecnicos[estado.tec]) + '|' + cod;
+
+// ---------- cálculo ----------
+function calcular() {
+  const cob = Math.max(0, +$('pCob').value || 0), seg = Math.max(0, +$('pSeg').value || 0);
+  const manual = parseInt($('pDias').value, 10);
+  let dMin = Infinity, dMax = -Infinity;
+  const porMat = new Map(), os = new Set(), tecs = new Set(), osTodas = new Set();
+  const enMes = [];
+  for (let i = 0; i < D.filas.length; i++) {
+    if (D.mesDeFila[i] !== estado.mes) continue;
+    const f = D.filas[i];
+    const d = diaDe(f[3]);
+    if (d < dMin) dMin = d; if (d > dMax) dMax = d;
+    if (estado.tipo >= 0 && f[2] !== estado.tipo) continue;
+    enMes.push(f);
+    osTodas.add(f[5]);
+    if (estado.tec >= 0 && f[0] !== estado.tec) continue;
+    os.add(f[5]); tecs.add(f[0]);
+    let m = porMat.get(f[1]);
+    if (!m) { m = { consumo: 0, os: new Set() }; porMat.set(f[1], m); }
+    m.consumo += f[4]; m.os.add(f[5]);
+  }
+  const diasPeriodo = isFinite(dMin) ? dMax - dMin + 1 : 0;
+  const dias = manual > 0 ? manual : diasPeriodo;
+  const filas = [];
+  for (const [mi, m] of porMat) {
+    if (Math.abs(m.consumo) < 1e-9) continue;
+    const [cod, nombre] = D.materiales[mi];
+    const prom = dias > 0 ? m.consumo / dias : 0;
+    const cobN = techoSeguro(prom * cob), segN = techoSeguro(prom * seg), total = cobN + segN;
+    const st = stockActual[claveStock(cod)];
+    const tieneStock = typeof st === 'number' && isFinite(st);
+    filas.push({ mi, cod, nombre, consumo: Math.round(m.consumo * 1000) / 1000, os: m.os.size, prom, cob: cobN, seg: segN, total,
+                 stock: tieneStock ? st : null, pedir: tieneStock ? Math.max(0, total - st) : null, porOs: m.consumo / m.os.size });
+  }
+  return { filas, cob, seg, dias, diasPeriodo, manual: manual > 0, dMin, dMax, os: os.size, osTodas: osTodas.size, tecs: tecs.size, enMes };
+}
+
+// ---------- pintar ----------
+function pintar() {
+  const r = calcular();
+  ultimoCalculo = r;
+  const q = normal(estado.busca);
+  let filas = r.filas.filter(f => !q || normal(f.nombre).includes(q) || normal(f.cod).includes(q));
+  const { col, dir } = estado.orden;
+  filas.sort((a, b) => {
+    const x = a[col], y = b[col];
+    if (typeof x === 'string') return dir * x.localeCompare(y, 'es');
+    return dir * ((x ?? -Infinity) - (y ?? -Infinity));
+  });
+  r.vista = filas;
+  if (estado.sel == null || !r.filas.some(f => f.mi === estado.sel)) {
+    const top = [...r.filas].sort((a, b) => b.os - a.os)[0];
+    estado.sel = top ? top.mi : null;
+  }
+
+  // cifras
+  const nombreTec = estado.tec < 0 ? 'Todos los técnicos' : D.tecnicos[estado.tec];
+  $('kOs').textContent = nf0.format(r.os);
+  $('kOsN').textContent = estado.tec < 0 ? nombreMes(estado.mes) : `de ${nf0.format(r.osTodas)} del equipo`;
+  $('kTec').textContent = nf0.format(r.tecs);
+  $('kTecN').textContent = estado.tec < 0 ? `de ${D.tecnicos.length} en la data` : nombreTec;
+  $('kMat').textContent = nf0.format(r.filas.length);
+  $('kMatN').textContent = `de ${D.materiales.length} códigos en la data`;
+  $('kDias').textContent = nf0.format(r.dias);
+  $('kDiasN').textContent = r.manual ? `fijado a mano (data: ${r.diasPeriodo})` : (r.diasPeriodo ? `${textoDia(r.dMin)} al ${textoDia(r.dMax)}` : 'sin movimientos');
+  const conStock = r.filas.filter(f => f.stock != null);
+  const porPedir = conStock.filter(f => f.pedir > 0).length;
+  $('kPedir').textContent = conStock.length ? nf0.format(porPedir) : '–';
+  $('kPedirN').textContent = conStock.length ? `de ${conStock.length} con stock cargado` : 'escribe el stock actual en la tabla';
+
+  $('leyenda').textContent = `${nombreTec} · ${nombreMes(estado.mes)} · promedio sobre ${r.dias} días · requerido = ${r.cob} + ${r.seg} días`;
+
+  if (estado.vista === 'stock') pintarStock(r, filas); else pintarMatriz(r, q);
+  pintarDetalle(r);
+}
+
+const columnasStock = [
+  { k: 'cod', t: 'Código', izq: true }, { k: 'nombre', t: 'Material', izq: true },
+  { k: 'os', t: 'Órdenes' }, { k: 'consumo', t: 'Consumo del mes' }, { k: 'prom', t: 'Promedio diario' },
+  { k: 'cob', t: 'Stock cobertura', dias: 'cob' }, { k: 'seg', t: 'Stock seguridad', dias: 'seg' },
+  { k: 'total', t: 'Stock requerido', dias: 'tot' }, { k: 'stock', t: 'Stock actual' }, { k: 'pedir', t: 'A pedir' }
+];
+
+function pintarStock(r, filas) {
+  const thead = $('tStock').tHead, tbody = $('tStock').tBodies[0];
+  thead.innerHTML = '<tr>' + columnasStock.map(c => {
+    const dias = c.dias ? `<span class="dias">${c.dias === 'cob' ? r.cob : c.dias === 'seg' ? r.seg : r.cob + r.seg} días</span>` : '';
+    const sort = estado.orden.col === c.k ? (estado.orden.dir > 0 ? 'ascending' : 'descending') : 'none';
+    return `<th class="${c.izq ? 'izq' : ''}" data-k="${c.k}" tabindex="0" aria-sort="${sort}">${c.t}${dias}</th>`;
+  }).join('') + '</tr>';
+  if (!filas.length) { tbody.innerHTML = `<tr><td colspan="10" class="vacio">No hay consumo con estos filtros.</td></tr>`; return; }
+  tbody.innerHTML = filas.map(f => {
+    const chip = f.pedir == null ? '<span class="chip nada">–</span>'
+      : f.pedir > 0 ? `<span class="chip pedir">${nf0.format(f.pedir)}</span>` : '<span class="chip ok">Cubierto</span>';
+    return `<tr data-mi="${f.mi}" tabindex="0" class="${f.mi === estado.sel ? 'elegida' : ''}">
+      <td class="izq cod">${esc(f.cod)}</td><td class="izq nom">${esc(f.nombre)}</td>
+      <td>${nf0.format(f.os)}</td><td>${nf0.format(f.consumo)}</td><td>${nf2.format(f.prom)}</td>
+      <td>${nf0.format(f.cob)}</td><td>${nf0.format(f.seg)}</td><td class="total">${nf0.format(f.total)}</td>
+      <td><input type="number" min="0" step="1" data-cod="${esc(f.cod)}" value="${f.stock ?? ''}" placeholder="—" aria-label="Stock actual de ${esc(f.nombre)}"></td>
+      <td>${chip}</td></tr>`;
+  }).join('');
+}
+
+function pintarMatriz(r, q) {
+  const thead = $('tMatriz').tHead, tbody = $('tMatriz').tBodies[0];
+  const tot = new Map(), porTec = new Map();
+  for (const f of r.enMes) {
+    tot.set(f[0], (tot.get(f[0]) || 0) + 1);
+    const k = f[1] + '|' + f[0];
+    porTec.set(k, (porTec.get(k) || 0) + f[4]);
+  }
+  const tecs = [...tot.keys()].sort((a, b) => D.tecnicos[a].localeCompare(D.tecnicos[b], 'es'));
+  const mats = [...new Set(r.enMes.map(f => f[1]))].filter(mi => { const [c, n] = D.materiales[mi]; return !q || normal(n).includes(q) || normal(c).includes(q); })
+    .sort((a, b) => D.materiales[a][1].localeCompare(D.materiales[b][1], 'es'));
+  thead.innerHTML = '<tr><th class="izq">Material</th>' + tecs.map(t => `<th title="${esc(D.tecnicos[t])}" style="${t === estado.tec ? 'color:var(--acento)' : ''}">${esc(corto(D.tecnicos[t]))}</th>`).join('') + '<th>Total</th></tr>';
+  if (!mats.length) { tbody.innerHTML = `<tr><td class="vacio" colspan="${tecs.length + 2}">No hay consumo con estos filtros.</td></tr>`; return; }
+  tbody.innerHTML = mats.map(mi => {
+    let suma = 0;
+    const celdas = tecs.map(t => { const v = porTec.get(mi + '|' + t) || 0; suma += v; return `<td class="${v ? '' : 'cero'}">${v ? nf0.format(v) : '·'}</td>`; }).join('');
+    return `<tr data-mi="${mi}" class="${mi === estado.sel ? 'elegida' : ''}"><td class="izq nom">${esc(D.materiales[mi][1])}</td>${celdas}<td class="total">${nf0.format(suma)}</td></tr>`;
+  }).join('');
+}
+
+function corto(n) { const [ap, no] = n.split(','); return (no ? no.trim().split(' ')[0] + ' ' : '') + (ap || '').trim().split(' ')[0]; }
+
+function pintarDetalle(r) {
+  const caja = $('detalle');
+  const f = r.filas.find(x => x.mi === estado.sel);
+  if (!f) { caja.innerHTML = '<div class="vacio">Elige un material de la tabla para ver su detalle.</div>'; return; }
+  // consumo por día (con el filtro de técnico)
+  const porDia = new Map();
+  const porTec = new Map();
+  for (const x of r.enMes) {
+    if (x[1] !== f.mi) continue;
+    porTec.set(x[0], (porTec.get(x[0]) || 0) + x[4]);
+    if (estado.tec >= 0 && x[0] !== estado.tec) continue;
+    const d = diaDe(x[3]); porDia.set(d, (porDia.get(d) || 0) + x[4]);
+  }
+  const dias = []; for (let d = r.dMin; d <= r.dMax; d++) dias.push(d);
+  const W = 330, H = 150, mI = 34, mD = 6, mA = 10, mB = 22;
+  const max = Math.max(1, ...dias.map(d => porDia.get(d) || 0), f.prom);
+  const paso = niceStep(max / 4), tope = Math.ceil(max / paso) * paso;
+  const y = v => mA + (H - mA - mB) * (1 - v / tope);
+  const bw = (W - mI - mD) / Math.max(1, dias.length);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Consumo diario de ${esc(f.nombre)}">`;
+  for (let v = 0; v <= tope + 1e-9; v += paso) svg += `<line x1="${mI}" x2="${W - mD}" y1="${y(v)}" y2="${y(v)}" stroke="var(--linea)" stroke-width="1"/><text x="${mI - 5}" y="${y(v) + 3.5}" text-anchor="end" font-size="10" fill="var(--suave)">${nf0.format(v)}</text>`;
+  dias.forEach((d, i) => {
+    const v = porDia.get(d) || 0;
+    svg += `<rect x="${mI + i * bw + bw * .15}" y="${y(v)}" width="${bw * .7}" height="${Math.max(0, y(0) - y(v))}" fill="var(--marca)" opacity=".8" rx="1.5"><title>${textoDia(d)}: ${nf0.format(v)}</title></rect>`;
+    if (i === 0 || i === dias.length - 1 || i % 5 === 0) svg += `<text x="${mI + i * bw + bw / 2}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--suave)">${textoDia(d)}</text>`;
+  });
+  svg += `<line x1="${mI}" x2="${W - mD}" y1="${y(f.prom)}" y2="${y(f.prom)}" stroke="var(--acento)" stroke-width="2" stroke-dasharray="5 3"/>`;
+  svg += `<text x="${W - mD}" y="${y(f.prom) - 4}" text-anchor="end" font-size="10" font-weight="600" fill="var(--acento)">promedio ${nf2.format(f.prom)}</text></svg>`;
+
+  const ranking = [...porTec.entries()].sort((a, b) => b[1] - a[1]);
+  const maxT = Math.max(1, ...ranking.map(e => e[1]));
+  const barras = ranking.map(([t, v]) => `<div class="barra ${t === estado.tec ? 'yo' : ''}"><span class="n" title="${esc(D.tecnicos[t])}">${esc(corto(D.tecnicos[t]))}</span><span class="t"><i style="width:${(v / maxT * 100).toFixed(1)}%"></i></span><span class="v">${nf0.format(v)}</span></div>`).join('');
+
+  caja.innerHTML = `
+    <div><span class="etiqueta">Detalle del material</span><div class="nombre">${esc(f.nombre)}</div><div class="cod">${esc(f.cod)}</div></div>
+    <div class="mini">
+      <div><span class="etiqueta">Consumo del mes</span><b>${nf0.format(f.consumo)}</b></div>
+      <div><span class="etiqueta">Por orden</span><b>${nf2.format(f.porOs)}</b></div>
+      <div><span class="etiqueta">Promedio diario</span><b>${nf2.format(f.prom)}</b></div>
+      <div><span class="etiqueta">Stock requerido</span><b>${nf0.format(f.total)}</b></div>
+    </div>
+    <div class="grafico"><span class="etiqueta">Consumo por día${estado.tec >= 0 ? ' · ' + esc(corto(D.tecnicos[estado.tec])) : ''}</span>${svg}</div>
+    <div><span class="etiqueta">Consumo por técnico en el mes</span><div class="barras" style="margin-top:6px">${barras}</div></div>`;
+}
+
+function niceStep(x) { const p = Math.pow(10, Math.floor(Math.log10(x || 1))); const n = x / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
+
+// ---------- carga ----------
+function usarDatos(d, nota) {
+  D = preparar(d);
+  llenarFiltros();
+  $('estadoCarga').innerHTML = nota;
+  pintar();
+}
+
+function textoOrigen(d, propia) {
+  const ms = d.filas.map(f => f[3]);
+  let a = Infinity, b = -Infinity; for (const m of ms) { if (m < a) a = m; if (m > b) b = m; }
+  const rango = `${textoDia(diaDe(a))}/${fechaDe(a).getUTCFullYear()} al ${textoDia(diaDe(b))}/${fechaDe(b).getUTCFullYear()}`;
+  return `${propia ? 'Archivo cargado' : 'Data incluida'}: <b>${esc(d.origen || 'Parte Diario')}</b> · ${nf0.format(d.filas.length)} movimientos · ${d.tecnicos.length} técnicos · ${d.materiales.length} materiales · ${rango}` +
+    (d.saltadas ? ` · ${d.saltadas} filas sin código o fecha válida se omitieron` : '');
+}
+
+async function cargarArchivo(file) {
+  if (!file) return;
+  $('estadoCarga').textContent = 'Leyendo ' + file.name + '…';
+  try {
+    if (typeof XLSX === 'undefined') throw new Error('No se pudo cargar el lector de Excel. Revisa tu conexión a internet y vuelve a intentar.');
+    const libro = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false });
+    const hoja = libro.Sheets[libro.SheetNames[0]];
+    const filas = XLSX.utils.sheet_to_json(hoja, { header: 1, raw: true, defval: '' });
+    const d = desdeHoja(filas, file.name);
+    guardar('consumo.data', d);
+    usarDatos(d, textoOrigen(d, true));
+    $('btnOriginal').classList.remove('oculto');
+  } catch (e) {
+    $('estadoCarga').innerHTML = `<span style="color:var(--alerta)">No se pudo leer <b>${esc(file.name)}</b>: ${esc(e.message)}</span>`;
+  }
+}
+
+$('btnCargar').addEventListener('click', () => $('archivo').click());
+$('archivo').addEventListener('change', e => { cargarArchivo(e.target.files[0]); e.target.value = ''; });
+const zona = $('zonaCarga');
+['dragenter', 'dragover'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); zona.classList.add('arrastre'); }));
+['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === 'drop' || !e.relatedTarget) zona.classList.remove('arrastre'); }));
+document.addEventListener('drop', e => cargarArchivo(e.dataTransfer.files[0]));
+$('btnOriginal').addEventListener('click', () => {
+  try { localStorage.removeItem('consumo.data'); } catch (e) {}
+  if (!DATOS_INCLUIDOS) { location.reload(); return; }
+  $('btnOriginal').classList.add('oculto');
+  usarDatos(JSON.parse(JSON.stringify(DATOS_INCLUIDOS)), textoOrigen(DATOS_INCLUIDOS, false));
+});
+
+// ---------- eventos ----------
+$('fTec').addEventListener('change', e => { estado.tec = +e.target.value; pintar(); });
+$('fMes').addEventListener('change', e => { estado.mes = +e.target.value; pintar(); });
+$('fTipo').addEventListener('change', e => { estado.tipo = +e.target.value; pintar(); });
+['pCob', 'pSeg', 'pDias'].forEach(id => $(id).addEventListener('input', pintar));
+$('fBusca').addEventListener('input', e => { estado.busca = e.target.value; pintar(); });
+
+function ordenar(k) {
+  if (estado.orden.col === k) estado.orden.dir *= -1; else estado.orden = { col: k, dir: (k === 'cod' || k === 'nombre') ? 1 : -1 };
+  pintar();
+}
+$('tStock').tHead.addEventListener('click', e => { const th = e.target.closest('th'); if (th) ordenar(th.dataset.k); });
+$('tStock').tHead.addEventListener('keydown', e => { const th = e.target.closest('th'); if (th && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); ordenar(th.dataset.k); } });
+function elegir(e) {
+  if (e.target.closest('input')) return;
+  const tr = e.target.closest('tr[data-mi]');
+  if (tr) { estado.sel = +tr.dataset.mi; document.querySelectorAll('tr.elegida').forEach(x => x.classList.remove('elegida')); tr.classList.add('elegida'); pintarDetalle(ultimoCalculo); }
+}
+$('tStock').tBodies[0].addEventListener('click', elegir);
+$('tStock').tBodies[0].addEventListener('keydown', e => { if (e.key === 'Enter' && !e.target.closest('input')) elegir(e); });
+$('tMatriz').tBodies[0].addEventListener('click', elegir);
+$('tStock').tBodies[0].addEventListener('change', e => {
+  const inp = e.target.closest('input[data-cod]'); if (!inp) return;
+  const k = claveStock(inp.dataset.cod), v = parseFloat(inp.value);
+  if (isFinite(v) && v >= 0) stockActual[k] = v; else delete stockActual[k];
+  guardar('consumo.stock', stockActual);
+  pintar();
+});
+
+function vista(v) {
+  estado.vista = v;
+  $('tabStock').setAttribute('aria-selected', v === 'stock'); $('tabMatriz').setAttribute('aria-selected', v === 'matriz');
+  $('cajaStock').classList.toggle('oculto', v !== 'stock'); $('cajaMatriz').classList.toggle('oculto', v !== 'matriz');
+  pintar();
+}
+$('tabStock').addEventListener('click', () => vista('stock'));
+$('tabMatriz').addEventListener('click', () => vista('matriz'));
+
+$('btnCopiar').addEventListener('click', async () => {
+  const tabla = estado.vista === 'stock' ? $('tStock') : $('tMatriz');
+  const txt = [...tabla.rows].map(tr => [...tr.cells].map(td => {
+    const inp = td.querySelector('input'); const t = inp ? inp.value : td.innerText.replace(/\n/g, ' ');
+    return t.trim();
+  }).join('\t')).join('\n');
+  const b = $('btnCopiar');
+  try { await navigator.clipboard.writeText(txt); b.textContent = 'Copiado: pega en Excel'; }
+  catch (e) { b.textContent = 'Tu navegador no permitió copiar'; }
+  setTimeout(() => { b.textContent = 'Copiar tabla para Excel'; }, 2500);
+});
+
+// ---------- inicio ----------
+(function inicio() {
+  if (!DATOS_INCLUIDOS) $('btnOriginal').textContent = 'Quitar la data cargada';
+  const propia = leer('consumo.data', null);
+  if (propia && propia.filas && propia.filas.length) {
+    usarDatos(propia, textoOrigen(propia, true));
+    $('btnOriginal').classList.remove('oculto');
+  } else if (DATOS_INCLUIDOS) {
+    usarDatos(JSON.parse(JSON.stringify(DATOS_INCLUIDOS)), textoOrigen(DATOS_INCLUIDOS, false));
+  } else {
+    $('estadoCarga').innerHTML = '<b>Aún no hay data.</b> Carga el Excel del Parte Diario exportado del sistema. El archivo se lee en tu navegador y no se sube a ningún servidor.';
+    $('tStock').tBodies[0].innerHTML = '<tr><td class="vacio">Carga el Excel del Parte Diario (botón de arriba o arrastrándolo a la página) para ver el consumo de cada material y el stock requerido.</td></tr>';
+    $('detalle').innerHTML = '<div class="vacio">Aquí verás el consumo diario y por técnico del material que elijas.</div>';
+  }
+})();
+</script>
+</body>
+</html>
