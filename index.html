@@ -80,17 +80,25 @@ select, input[type="number"], input[type="search"] { font: 14px var(--f-cuerpo);
 .cifra strong { font: 700 30px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
 .cifra span.nota { color: var(--suave); font-size: 12px; }
 .cuerpo { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
-@media (max-width: 1100px) { .cuerpo { grid-template-columns: minmax(0, 1fr); } }
+/* La tabla de stock necesita todo el ancho: el detalle baja debajo salvo en pantallas muy anchas */
+@media (max-width: 1700px) {
+  .cuerpo { grid-template-columns: minmax(0, 1fr); }
+  .detalle { position: static; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
+}
+.envoltura { max-width: 1800px; }
 .envoltura > * { min-width: 0; }
 .pestanas { display: flex; gap: 4px; padding: 10px 12px 0; border-bottom: 1px solid var(--linea); flex-wrap: wrap; }
 .pestana { font: 600 14px var(--f-cuerpo); padding: 8px 12px; border: 0; background: none; color: var(--suave); border-bottom: 3px solid transparent; cursor: pointer; }
 .pestana[aria-selected="true"] { color: var(--tinta); border-bottom-color: var(--acento); }
 .barra-tabla { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 12px; }
 .barra-tabla .leyenda { color: var(--suave); font-size: 12px; }
-.tabla-caja { overflow-x: auto; }
+/* La tabla se desplaza dentro de su caja para que los títulos (y en la matriz, la columna Material) queden fijos */
+.tabla-caja { overflow: auto; max-height: calc(100vh - 120px); }
+.matriz th:first-child, .matriz td:first-child { position: sticky; left: 0; z-index: 1; background: var(--papel); box-shadow: 1px 0 0 var(--linea); }
+.matriz th:first-child { z-index: 3; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { padding: 7px 10px; border-bottom: 1px solid var(--linea); text-align: right; white-space: nowrap; }
-th { position: sticky; top: 0; background: var(--papel); font: 600 12px/1.25 var(--f-cuerpo); color: var(--suave); cursor: pointer; user-select: none; white-space: normal; vertical-align: bottom; }
+th { position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 var(--linea); background: var(--papel); font: 600 12px/1.25 var(--f-cuerpo); color: var(--suave); cursor: pointer; user-select: none; white-space: normal; vertical-align: bottom; }
 th.izq, td.izq { text-align: left; }
 th .dias { display: block; font-weight: 400; }
 th[aria-sort="ascending"]::after { content: " ▲"; color: var(--acento); }
@@ -102,6 +110,17 @@ td.cod { font: 12px var(--f-mono); color: var(--suave); }
 td.nom { white-space: normal; min-width: 260px; max-width: 420px; }
 td.total { font-weight: 600; }
 td input { width: 96px; text-align: right; padding: 4px 6px; font: 13px var(--f-cuerpo); }
+th.almacen { color: var(--tinta); min-width: 150px; }
+td.almacen { background: var(--acento-suave); }
+td.almacen input { width: 140px; padding: 7px 9px; font: 600 15px var(--f-cuerpo); border-color: var(--acento); }
+.abrir { border: 0; background: none; color: var(--marca); cursor: pointer; font: 600 13px var(--f-cuerpo); width: 22px; padding: 0; margin-right: 4px; }
+.abrir[aria-expanded="true"] { color: var(--acento); }
+tbody tr.sub, tbody tr.sub:nth-child(even) { background: var(--fila); cursor: default; }
+tr.sub > td { padding: 4px 10px 14px 38px; text-align: left; white-space: normal; box-shadow: inset 4px 0 0 var(--acento); }
+tr.sub table { width: auto; min-width: 620px; font-size: 13px; background: var(--papel); border: 1px solid var(--linea); border-radius: 6px; }
+tr.sub th { position: static; box-shadow: none; cursor: default; }
+tr.sub tr.yo td { font-weight: 600; color: var(--acento); }
+tr.sub tfoot td { font-weight: 600; border-bottom: 0; }
 .chip { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .chip.pedir { background: var(--alerta-suave); color: var(--alerta); }
 .chip.ok { background: var(--bien-suave); color: var(--bien); }
@@ -244,7 +263,7 @@ function preparar(d) {
   return d;
 }
 
-function normal(s) { return String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+function normal(s) { return String(s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
 
 function desdeHoja(filas, nombreArchivo) {
   let iCab = filas.findIndex(f => f.some(c => normal(c) === 'tecnico') && f.some(c => normal(c) === 'material'));
@@ -342,7 +361,7 @@ function llenarFiltros() {
 }
 
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const techoSeguro = x => Math.ceil(x - 1e-9);
+const techoSeguro = x => Math.max(0, Math.ceil(x - 1e-9));
 const claveStock = cod => 'ALMACEN|' + cod;
 
 /* Mochila del filtro actual: la del técnico elegido o la suma de todas las mochilas. */
@@ -480,7 +499,7 @@ function pintarStock(r, filas) {
     const dias = c.dias ? `<span class="dias">${c.dias === 'cob' ? r.cob : c.dias === 'seg' ? r.seg : r.cob + r.seg} días</span>` : '';
     const sort = estado.orden.col === c.k ? (estado.orden.dir > 0 ? 'ascending' : 'descending') : 'none';
     const titulo = c.k === 'pedir' && estado.tec >= 0 ? 'Falta entregar' : c.t;
-    return `<th class="${c.izq ? 'izq' : ''}" data-k="${c.k}" tabindex="0" aria-sort="${sort}">${titulo}${dias}</th>`;
+    return `<th class="${c.izq ? 'izq' : ''}${c.k === 'stock' ? ' almacen' : ''}" data-k="${c.k}" tabindex="0" aria-sort="${sort}">${titulo}${dias}</th>`;
   }).join('') + '</tr>';
   if (!filas.length) { tbody.innerHTML = `<tr><td colspan="${columnasStock.length}" class="vacio">No hay consumo con estos filtros.</td></tr>`; return; }
   const deTec = estado.tec >= 0;
@@ -490,15 +509,43 @@ function pintarStock(r, filas) {
     const mochila = deTec
       ? `<input type="number" min="0" step="any" data-mochila="${esc(f.cod)}" value="${f.mochila ?? ''}" placeholder="—" aria-label="Mochila de ${esc(f.nombre)}">`
       : `<input type="text" readonly tabindex="-1" value="${f.mochila == null ? '—' : nf0.format(f.mochila)}" title="Suma de las mochilas. Elige un técnico para editar la suya." aria-label="Suma de mochilas de ${esc(f.nombre)}">`;
+    const abierto = abiertos.has(f.cod);
     return `<tr data-mi="${f.mi}" tabindex="0" class="${f.mi === estado.sel ? 'elegida' : ''}">
-      <td class="izq cod">${esc(f.cod)}</td><td class="izq nom">${esc(f.nombre)}</td>
+      <td class="izq cod"><button class="abrir" type="button" data-abrir="${esc(f.cod)}" aria-expanded="${abierto}" title="Ver cantidades por técnico" aria-label="Ver cantidades por técnico de ${esc(f.nombre)}">${abierto ? '▾' : '▸'}</button>${esc(f.cod)}</td><td class="izq nom">${esc(f.nombre)}</td>
       <td class="${f.os ? '' : 'suave'}">${nf0.format(f.os)}</td><td class="${f.consumo ? '' : 'suave'}">${nf0.format(f.consumo)}</td><td>${nf2.format(f.prom)}</td>
       <td>${nf0.format(f.cob)}</td><td>${nf0.format(f.seg)}</td><td class="total">${nf0.format(f.total)}</td>
       <td>${mochila}</td>
-      <td><input type="number" min="0" step="any" data-cod="${esc(f.cod)}" value="${f.stock ?? ''}" placeholder="—" aria-label="Stock de almacén de ${esc(f.nombre)}"></td>
+      <td class="almacen"><input type="number" min="0" step="any" data-cod="${esc(f.cod)}" value="${f.stock ?? ''}" placeholder="—" aria-label="Stock de almacén de ${esc(f.nombre)}"></td>
       <td class="total">${f.stockTotal == null ? '–' : nf0.format(f.stockTotal)}</td>
-      <td>${chip}</td></tr>`;
+      <td>${chip}</td></tr>` +
+      (abierto ? `<tr class="sub"><td colspan="${columnasStock.length}">${tablaTecnicos(f, r)}</td></tr>` : '');
   }).join('');
+}
+
+/* Desplegable de cada material: lo que consumió y lo que tiene en su mochila cada técnico */
+const abiertos = new Set();
+function tablaTecnicos(f, r) {
+  const mi = D.materiales.findIndex(m => m[0] === f.cod);
+  const porTec = new Map();
+  const de = k => { if (!porTec.has(k)) porTec.set(k, { nombre: '', consumo: 0, mochila: null }); return porTec.get(k); };
+  if (mi >= 0) for (const x of r.enMes) if (x[1] === mi) { const n = D.tecnicos[x[0]], o = de(claveTec(n)); o.nombre = n; o.consumo += x[4]; }
+  if (mochilas) for (const [k, t] of Object.entries(mochilas.tec)) if (t.mat[f.cod]) { const o = de(k); if (!o.nombre) o.nombre = t.nombre; o.mochila = t.mat[f.cod]; }
+  if (!porTec.size) return '<div class="vacio">Ningún técnico tiene consumo ni mochila de este material en el periodo.</div>';
+  const sel = estado.tec >= 0 ? claveTec(D.tecnicos[estado.tec]) : null;
+  const lista = [...porTec.entries()].map(([k, o]) => {
+    const prom = r.dias > 0 ? o.consumo / r.dias : 0, req = techoSeguro(prom * r.cob) + techoSeguro(prom * r.seg);
+    return { k, ...o, prom, req, falta: Math.max(0, req - (o.mochila || 0)) };
+  }).sort((a, b) => b.consumo - a.consumo || (b.mochila || 0) - (a.mochila || 0) || a.nombre.localeCompare(b.nombre, 'es'));
+  const t = lista.reduce((s, o) => ({ consumo: s.consumo + o.consumo, mochila: s.mochila + (o.mochila || 0), req: s.req + o.req, falta: s.falta + o.falta }),
+    { consumo: 0, mochila: 0, req: 0, falta: 0 });
+  const chip = n => n > 0 ? `<span class="chip pedir">${nf0.format(n)}</span>` : '<span class="chip ok">Cubierto</span>';
+  const filas = lista.map(o => `<tr class="${o.k === sel ? 'yo' : ''}"><td class="izq">${esc(o.nombre)}</td>
+    <td>${o.consumo ? nf0.format(o.consumo) : '–'}</td><td>${o.consumo ? nf2.format(o.prom) : '–'}</td><td>${nf0.format(o.req)}</td>
+    <td>${o.mochila == null ? '–' : nf0.format(o.mochila)}</td><td>${o.req ? chip(o.falta) : '–'}</td></tr>`).join('');
+  return `<table><thead><tr><th class="izq">Técnico (${lista.length})</th><th>Consumo del mes</th><th>Promedio diario</th>
+    <th>Requerido ${r.cob + r.seg} días</th><th>Mochila</th><th>Falta entregar</th></tr></thead><tbody>${filas}</tbody>
+    <tfoot><tr><td class="izq">Total</td><td>${nf0.format(t.consumo)}</td><td>${nf2.format(r.dias > 0 ? t.consumo / r.dias : 0)}</td>
+    <td>${nf0.format(t.req)}</td><td>${nf0.format(t.mochila)}</td><td>${nf0.format(t.falta)}</td></tr></tfoot></table>`;
 }
 
 function pintarMatriz(r, q) {
@@ -805,7 +852,11 @@ function elegir(e) {
   const tr = e.target.closest('tr[data-mi]');
   if (tr) { estado.sel = +tr.dataset.mi; document.querySelectorAll('tr.elegida').forEach(x => x.classList.remove('elegida')); tr.classList.add('elegida'); pintarDetalle(ultimoCalculo); }
 }
-$('tStock').tBodies[0].addEventListener('click', elegir);
+$('tStock').tBodies[0].addEventListener('click', e => {
+  const b = e.target.closest('[data-abrir]');
+  if (b) { const c = b.dataset.abrir; abiertos.has(c) ? abiertos.delete(c) : abiertos.add(c); pintar(); return; }
+  elegir(e);
+});
 $('tStock').tBodies[0].addEventListener('keydown', e => { if (e.key === 'Enter' && !e.target.closest('input')) elegir(e); });
 $('tMatriz').tBodies[0].addEventListener('click', elegir);
 $('tStock').tBodies[0].addEventListener('change', e => {
@@ -837,7 +888,7 @@ $('tabMatriz').addEventListener('click', () => vista('matriz'));
 
 $('btnCopiar').addEventListener('click', async () => {
   const tabla = estado.vista === 'stock' ? $('tStock') : $('tMatriz');
-  const txt = [...tabla.rows].map(tr => [...tr.cells].map(td => {
+  const txt = [...tabla.rows].filter(tr => !tr.classList.contains('sub')).map(tr => [...tr.cells].map(td => {
     const inp = td.querySelector('input'); const t = inp ? inp.value : td.innerText.replace(/\n/g, ' ');
     return t.trim();
   }).join('\t')).join('\n');
