@@ -97,7 +97,7 @@ select, input[type="number"], input[type="search"] { font: 14px var(--f-cuerpo);
 .matriz th:first-child, .matriz td:first-child { position: sticky; left: 0; z-index: 1; background: var(--papel); box-shadow: 1px 0 0 var(--linea); }
 .matriz th:first-child { z-index: 3; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-th, td { padding: 7px 10px; border-bottom: 1px solid var(--linea); text-align: right; white-space: nowrap; }
+th, td { padding: 7px 8px; border-bottom: 1px solid var(--linea); text-align: right; white-space: nowrap; }
 th { position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 var(--linea); background: var(--papel); font: 600 12px/1.25 var(--f-cuerpo); color: var(--suave); cursor: pointer; user-select: none; white-space: normal; vertical-align: bottom; }
 th.izq, td.izq { text-align: left; }
 th .dias { display: block; font-weight: 400; }
@@ -107,7 +107,9 @@ tbody tr { cursor: pointer; }
 tbody tr:nth-child(even) { background: var(--fila); }
 tbody tr.elegida { box-shadow: inset 4px 0 0 var(--acento); background: var(--acento-suave); }
 td.cod { font: 12px var(--f-mono); color: var(--suave); }
-td.nom { white-space: normal; min-width: 210px; max-width: 360px; }
+td.nom { white-space: normal; min-width: 230px; max-width: 360px; }
+.matcel { display: flex; gap: 4px; align-items: flex-start; }
+.cod2 { display: block; font: 11px var(--f-mono); color: var(--suave); }
 td.total { font-weight: 600; }
 td input { width: 96px; text-align: right; padding: 4px 6px; font: 13px var(--f-cuerpo); }
 th.almacen { color: var(--tinta); min-width: 150px; }
@@ -408,6 +410,16 @@ function calcular() {
   }
   const diasPeriodo = isFinite(dMin) ? dMax - dMin + 1 : 0;
   const dias = manual > 0 ? manual : diasPeriodo;
+  // Últimos 9 días: los 9 días que terminan en el último día con datos del mes elegido (puede tomar días del mes anterior)
+  const ini9 = dMax - 8, ult9 = new Map(), ult9Tec = new Map();
+  if (isFinite(dMax)) for (const f of D.filas) {
+    const d = diaDe(f[3]);
+    if (d < ini9 || d > dMax || (estado.tipo >= 0 && f[2] !== estado.tipo)) continue;
+    const k = f[1] + '|' + f[0];
+    ult9Tec.set(k, (ult9Tec.get(k) || 0) + f[4]);
+    if (estado.tec >= 0 && f[0] !== estado.tec) continue;
+    ult9.set(f[1], (ult9.get(f[1]) || 0) + f[4]);
+  }
   const filas = [];
   const fila = (mi, cod, nombre, consumo, nOs) => {
     const prom = dias > 0 ? consumo / dias : 0;
@@ -420,7 +432,7 @@ function calcular() {
     // Con todos, lo que falta es lo que hay que comprar (requerido menos mochilas más almacén).
     const disponible = estado.tec >= 0 ? (mochila ?? 0) : (mochila ?? 0) + (almacen ?? 0);
     const tieneBase = estado.tec >= 0 ? mochila != null : hayStock;
-    filas.push({ mi, cod, nombre, consumo: Math.round(consumo * 1000) / 1000, os: nOs, prom, promSem: prom * 7, cob: cobN, seg: segN, total,
+    filas.push({ mi, cod, nombre, consumo: Math.round(consumo * 1000) / 1000, os: nOs, prom, prom9: (ult9.get(mi) || 0) / 9, promSem: prom * 7, promMes: prom * 30, cob: cobN, seg: segN, total,
                  mochila, stock: almacen, stockTotal: hayStock ? (mochila ?? 0) + (almacen ?? 0) : null,
                  pedir: tieneBase ? Math.max(0, total - disponible) : null, porOs: nOs ? consumo / nOs : 0 });
   };
@@ -440,7 +452,7 @@ function calcular() {
     const nombre = iMat.has(cod) ? D.materiales[iMat.get(cod)][1] : (mochilas && mochilas.nombres[cod]) || cod;
     fila(mi, cod, nombre, 0, 0);
   }
-  return { filas, cob, seg, dias, diasPeriodo, manual: manual > 0, dMin, dMax, os: os.size, osTodas: osTodas.size, tecs: tecs.size, enMes };
+  return { filas, cob, seg, dias, diasPeriodo, manual: manual > 0, dMin, dMax, ini9, ult9Tec, os: os.size, osTodas: osTodas.size, tecs: tecs.size, enMes };
 }
 
 // ---------- pintar ----------
@@ -486,8 +498,10 @@ function pintar() {
 }
 
 const columnasStock = [
-  { k: 'cod', t: 'Código', izq: true }, { k: 'nombre', t: 'Material', izq: true },
-  { k: 'os', t: 'Órdenes' }, { k: 'consumo', t: 'Consumo del mes' }, { k: 'prom', t: 'Promedio diario' }, { k: 'promSem', t: 'Promedio semanal', nota: '7 días' },
+  { k: 'nombre', t: 'Material · código', izq: true },
+  { k: 'os', t: 'Órdenes' }, { k: 'consumo', t: 'Consumo del mes' }, { k: 'prom', t: 'Promedio diario', nota: 'del periodo' },
+  { k: 'prom9', t: 'Promedio últimos 9 días', nota: r => isFinite(r.dMax) ? `${textoDia(r.ini9)} al ${textoDia(r.dMax)}` : '' },
+  { k: 'promSem', t: 'Promedio semanal', nota: '× 7 días' }, { k: 'promMes', t: 'Promedio mensual', nota: '× 30 días' },
   { k: 'cob', t: 'Stock cobertura', dias: 'cob' }, { k: 'seg', t: 'Stock seguridad', dias: 'seg' },
   { k: 'total', t: 'Stock requerido', dias: 'tot' }, { k: 'mochila', t: 'Stock técnico (mochila)' }, { k: 'stock', t: 'Stock almacén' },
   { k: 'stockTotal', t: 'Stock total' }, { k: 'pedir', t: 'A pedir' }
@@ -496,7 +510,7 @@ const columnasStock = [
 function pintarStock(r, filas) {
   const thead = $('tStock').tHead, tbody = $('tStock').tBodies[0];
   thead.innerHTML = '<tr>' + columnasStock.map(c => {
-    const dias = c.dias ? `<span class="dias">${c.dias === 'cob' ? r.cob : c.dias === 'seg' ? r.seg : r.cob + r.seg} días</span>` : (c.nota ? `<span class="dias">${c.nota}</span>` : '');
+    const dias = c.dias ? `<span class="dias">${c.dias === 'cob' ? r.cob : c.dias === 'seg' ? r.seg : r.cob + r.seg} días</span>` : (c.nota ? `<span class="dias">${typeof c.nota === 'function' ? c.nota(r) : c.nota}</span>` : '');
     const sort = estado.orden.col === c.k ? (estado.orden.dir > 0 ? 'ascending' : 'descending') : 'none';
     const titulo = c.k === 'pedir' && estado.tec >= 0 ? 'Falta entregar' : c.t;
     return `<th class="${c.izq ? 'izq' : ''}${c.k === 'stock' ? ' almacen' : ''}" data-k="${c.k}" tabindex="0" aria-sort="${sort}">${titulo}${dias}</th>`;
@@ -511,8 +525,8 @@ function pintarStock(r, filas) {
       : `<input type="text" readonly tabindex="-1" value="${f.mochila == null ? '—' : nf0.format(f.mochila)}" title="Suma de las mochilas. Elige un técnico para editar la suya." aria-label="Suma de mochilas de ${esc(f.nombre)}">`;
     const abierto = abiertos.has(f.cod);
     return `<tr data-mi="${f.mi}" tabindex="0" class="${f.mi === estado.sel ? 'elegida' : ''}">
-      <td class="izq cod"><button class="abrir" type="button" data-abrir="${esc(f.cod)}" aria-expanded="${abierto}" title="Ver cantidades por técnico" aria-label="Ver cantidades por técnico de ${esc(f.nombre)}">${abierto ? '▾' : '▸'}</button>${esc(f.cod)}</td><td class="izq nom">${esc(f.nombre)}</td>
-      <td class="${f.os ? '' : 'suave'}">${nf0.format(f.os)}</td><td class="${f.consumo ? '' : 'suave'}">${nf0.format(f.consumo)}</td><td>${nf2.format(f.prom)}</td><td>${nf2.format(f.promSem)}</td>
+      <td class="izq nom"><div class="matcel"><button class="abrir" type="button" data-abrir="${esc(f.cod)}" aria-expanded="${abierto}" title="Ver cantidades por técnico" aria-label="Ver cantidades por técnico de ${esc(f.nombre)}">${abierto ? '▾' : '▸'}</button><div>${esc(f.nombre)}<span class="cod2">${esc(f.cod)}</span></div></div></td>
+      <td class="${f.os ? '' : 'suave'}">${nf0.format(f.os)}</td><td class="${f.consumo ? '' : 'suave'}">${nf0.format(f.consumo)}</td><td>${nf2.format(f.prom)}</td><td>${nf2.format(f.prom9)}</td><td>${nf0.format(f.promSem)}</td><td>${nf0.format(f.promMes)}</td>
       <td>${nf0.format(f.cob)}</td><td>${nf0.format(f.seg)}</td><td class="total">${nf0.format(f.total)}</td>
       <td>${mochila}</td>
       <td class="almacen"><input type="number" min="0" step="any" data-cod="${esc(f.cod)}" value="${f.stock ?? ''}" placeholder="—" aria-label="Stock de almacén de ${esc(f.nombre)}"></td>
@@ -532,20 +546,24 @@ function tablaTecnicos(f, r) {
   if (mochilas) for (const [k, t] of Object.entries(mochilas.tec)) if (t.mat[f.cod]) { const o = de(k); if (!o.nombre) o.nombre = t.nombre; o.mochila = t.mat[f.cod]; }
   if (!porTec.size) return '<div class="vacio">Ningún técnico tiene consumo ni mochila de este material en el periodo.</div>';
   const sel = estado.tec >= 0 ? claveTec(D.tecnicos[estado.tec]) : null;
+  const iTec = new Map(D.tecnicos.map((n, i) => [claveTec(n), i]));
   const lista = [...porTec.entries()].map(([k, o]) => {
     const prom = r.dias > 0 ? o.consumo / r.dias : 0, req = techoSeguro(prom * r.cob) + techoSeguro(prom * r.seg);
-    return { k, ...o, prom, req, falta: Math.max(0, req - (o.mochila || 0)) };
+    const u9 = iTec.has(k) && mi >= 0 ? (r.ult9Tec.get(mi + '|' + iTec.get(k)) || 0) : 0;
+    return { k, ...o, prom, u9, req, falta: Math.max(0, req - (o.mochila || 0)) };
   }).sort((a, b) => b.consumo - a.consumo || (b.mochila || 0) - (a.mochila || 0) || a.nombre.localeCompare(b.nombre, 'es'));
-  const t = lista.reduce((s, o) => ({ consumo: s.consumo + o.consumo, mochila: s.mochila + (o.mochila || 0), req: s.req + o.req, falta: s.falta + o.falta }),
-    { consumo: 0, mochila: 0, req: 0, falta: 0 });
+  const t = lista.reduce((s, o) => ({ consumo: s.consumo + o.consumo, u9: s.u9 + o.u9, mochila: s.mochila + (o.mochila || 0), req: s.req + o.req, falta: s.falta + o.falta }),
+    { consumo: 0, u9: 0, mochila: 0, req: 0, falta: 0 });
   const chip = n => n > 0 ? `<span class="chip pedir">${nf0.format(n)}</span>` : '<span class="chip ok">Cubierto</span>';
   const filas = lista.map(o => `<tr class="${o.k === sel ? 'yo' : ''}"><td class="izq">${esc(o.nombre)}</td>
-    <td>${o.consumo ? nf0.format(o.consumo) : '–'}</td><td>${o.consumo ? nf2.format(o.prom) : '–'}</td><td>${o.consumo ? nf2.format(o.prom * 7) : '–'}</td><td>${nf0.format(o.req)}</td>
+    <td>${o.consumo ? nf0.format(o.consumo) : '–'}</td><td>${o.consumo ? nf2.format(o.prom) : '–'}</td><td>${o.u9 ? nf2.format(o.u9 / 9) : '–'}</td>
+    <td>${o.consumo ? nf0.format(o.prom * 7) : '–'}</td><td>${o.consumo ? nf0.format(o.prom * 30) : '–'}</td><td>${nf0.format(o.req)}</td>
     <td>${o.mochila == null ? '–' : nf0.format(o.mochila)}</td><td>${o.req ? chip(o.falta) : '–'}</td></tr>`).join('');
   const promTot = r.dias > 0 ? t.consumo / r.dias : 0;
-  return `<table><thead><tr><th class="izq">Técnico (${lista.length})</th><th>Consumo del mes</th><th>Promedio diario</th><th>Promedio semanal</th>
-    <th>Requerido ${r.cob + r.seg} días</th><th>Mochila</th><th>Falta entregar</th></tr></thead><tbody>${filas}</tbody>
-    <tfoot><tr><td class="izq">Total</td><td>${nf0.format(t.consumo)}</td><td>${nf2.format(promTot)}</td><td>${nf2.format(promTot * 7)}</td>
+  return `<table><thead><tr><th class="izq">Técnico (${lista.length})</th><th>Consumo del mes</th><th>Promedio diario</th><th>Últimos 9 días</th>
+    <th>Promedio semanal</th><th>Promedio mensual</th><th>Requerido ${r.cob + r.seg} días</th><th>Mochila</th><th>Falta entregar</th></tr></thead><tbody>${filas}</tbody>
+    <tfoot><tr><td class="izq">Total</td><td>${nf0.format(t.consumo)}</td><td>${nf2.format(promTot)}</td><td>${nf2.format(t.u9 / 9)}</td>
+    <td>${nf0.format(promTot * 7)}</td><td>${nf0.format(promTot * 30)}</td>
     <td>${nf0.format(t.req)}</td><td>${nf0.format(t.mochila)}</td><td>${nf0.format(t.falta)}</td></tr></tfoot></table>`;
 }
 
@@ -624,7 +642,9 @@ function pintarDetalle(r) {
       <div><span class="etiqueta">Consumo del mes</span><b>${nf0.format(f.consumo)}</b></div>
       <div><span class="etiqueta">Por orden</span><b>${nf2.format(f.porOs)}</b></div>
       <div><span class="etiqueta">Promedio diario</span><b>${nf2.format(f.prom)}</b></div>
-      <div><span class="etiqueta">Promedio semanal</span><b>${nf2.format(f.promSem)}</b></div>
+      <div><span class="etiqueta">Últimos 9 días</span><b>${nf2.format(f.prom9)}</b></div>
+      <div><span class="etiqueta">Promedio semanal</span><b>${nf0.format(f.promSem)}</b></div>
+      <div><span class="etiqueta">Promedio mensual</span><b>${nf0.format(f.promMes)}</b></div>
       <div><span class="etiqueta">Stock requerido</span><b>${nf0.format(f.total)}</b></div>
       <div><span class="etiqueta">Días del periodo</span><b>${nf0.format(r.dias)}</b></div>
     </div>
@@ -907,7 +927,7 @@ $('tabMatriz').addEventListener('click', () => vista('matriz'));
 $('btnCopiar').addEventListener('click', async () => {
   const tabla = estado.vista === 'stock' ? $('tStock') : $('tMatriz');
   const txt = [...tabla.rows].filter(tr => !tr.classList.contains('sub')).map(tr => [...tr.cells].map(td => {
-    const inp = td.querySelector('input'); const t = inp ? inp.value : td.innerText.replace(/\n/g, ' ');
+    const inp = td.querySelector('input'); const t = inp ? inp.value : td.innerText.replace(/[▸▾]/g, '').replace(/\n/g, ' ');
     return t.trim();
   }).join('\t')).join('\n');
   const b = $('btnCopiar');
