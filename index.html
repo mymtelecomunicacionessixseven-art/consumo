@@ -107,7 +107,7 @@ tbody tr { cursor: pointer; }
 tbody tr:nth-child(even) { background: var(--fila); }
 tbody tr.elegida { box-shadow: inset 4px 0 0 var(--acento); background: var(--acento-suave); }
 td.cod { font: 12px var(--f-mono); color: var(--suave); }
-td.nom { white-space: normal; min-width: 260px; max-width: 420px; }
+td.nom { white-space: normal; min-width: 210px; max-width: 360px; }
 td.total { font-weight: 600; }
 td input { width: 96px; text-align: right; padding: 4px 6px; font: 13px var(--f-cuerpo); }
 th.almacen { color: var(--tinta); min-width: 150px; }
@@ -420,7 +420,7 @@ function calcular() {
     // Con todos, lo que falta es lo que hay que comprar (requerido menos mochilas más almacén).
     const disponible = estado.tec >= 0 ? (mochila ?? 0) : (mochila ?? 0) + (almacen ?? 0);
     const tieneBase = estado.tec >= 0 ? mochila != null : hayStock;
-    filas.push({ mi, cod, nombre, consumo: Math.round(consumo * 1000) / 1000, os: nOs, prom, cob: cobN, seg: segN, total,
+    filas.push({ mi, cod, nombre, consumo: Math.round(consumo * 1000) / 1000, os: nOs, prom, promSem: prom * 7, cob: cobN, seg: segN, total,
                  mochila, stock: almacen, stockTotal: hayStock ? (mochila ?? 0) + (almacen ?? 0) : null,
                  pedir: tieneBase ? Math.max(0, total - disponible) : null, porOs: nOs ? consumo / nOs : 0 });
   };
@@ -487,7 +487,7 @@ function pintar() {
 
 const columnasStock = [
   { k: 'cod', t: 'Código', izq: true }, { k: 'nombre', t: 'Material', izq: true },
-  { k: 'os', t: 'Órdenes' }, { k: 'consumo', t: 'Consumo del mes' }, { k: 'prom', t: 'Promedio diario' },
+  { k: 'os', t: 'Órdenes' }, { k: 'consumo', t: 'Consumo del mes' }, { k: 'prom', t: 'Promedio diario' }, { k: 'promSem', t: 'Promedio semanal', nota: '7 días' },
   { k: 'cob', t: 'Stock cobertura', dias: 'cob' }, { k: 'seg', t: 'Stock seguridad', dias: 'seg' },
   { k: 'total', t: 'Stock requerido', dias: 'tot' }, { k: 'mochila', t: 'Stock técnico (mochila)' }, { k: 'stock', t: 'Stock almacén' },
   { k: 'stockTotal', t: 'Stock total' }, { k: 'pedir', t: 'A pedir' }
@@ -496,7 +496,7 @@ const columnasStock = [
 function pintarStock(r, filas) {
   const thead = $('tStock').tHead, tbody = $('tStock').tBodies[0];
   thead.innerHTML = '<tr>' + columnasStock.map(c => {
-    const dias = c.dias ? `<span class="dias">${c.dias === 'cob' ? r.cob : c.dias === 'seg' ? r.seg : r.cob + r.seg} días</span>` : '';
+    const dias = c.dias ? `<span class="dias">${c.dias === 'cob' ? r.cob : c.dias === 'seg' ? r.seg : r.cob + r.seg} días</span>` : (c.nota ? `<span class="dias">${c.nota}</span>` : '');
     const sort = estado.orden.col === c.k ? (estado.orden.dir > 0 ? 'ascending' : 'descending') : 'none';
     const titulo = c.k === 'pedir' && estado.tec >= 0 ? 'Falta entregar' : c.t;
     return `<th class="${c.izq ? 'izq' : ''}${c.k === 'stock' ? ' almacen' : ''}" data-k="${c.k}" tabindex="0" aria-sort="${sort}">${titulo}${dias}</th>`;
@@ -512,7 +512,7 @@ function pintarStock(r, filas) {
     const abierto = abiertos.has(f.cod);
     return `<tr data-mi="${f.mi}" tabindex="0" class="${f.mi === estado.sel ? 'elegida' : ''}">
       <td class="izq cod"><button class="abrir" type="button" data-abrir="${esc(f.cod)}" aria-expanded="${abierto}" title="Ver cantidades por técnico" aria-label="Ver cantidades por técnico de ${esc(f.nombre)}">${abierto ? '▾' : '▸'}</button>${esc(f.cod)}</td><td class="izq nom">${esc(f.nombre)}</td>
-      <td class="${f.os ? '' : 'suave'}">${nf0.format(f.os)}</td><td class="${f.consumo ? '' : 'suave'}">${nf0.format(f.consumo)}</td><td>${nf2.format(f.prom)}</td>
+      <td class="${f.os ? '' : 'suave'}">${nf0.format(f.os)}</td><td class="${f.consumo ? '' : 'suave'}">${nf0.format(f.consumo)}</td><td>${nf2.format(f.prom)}</td><td>${nf2.format(f.promSem)}</td>
       <td>${nf0.format(f.cob)}</td><td>${nf0.format(f.seg)}</td><td class="total">${nf0.format(f.total)}</td>
       <td>${mochila}</td>
       <td class="almacen"><input type="number" min="0" step="any" data-cod="${esc(f.cod)}" value="${f.stock ?? ''}" placeholder="—" aria-label="Stock de almacén de ${esc(f.nombre)}"></td>
@@ -540,11 +540,12 @@ function tablaTecnicos(f, r) {
     { consumo: 0, mochila: 0, req: 0, falta: 0 });
   const chip = n => n > 0 ? `<span class="chip pedir">${nf0.format(n)}</span>` : '<span class="chip ok">Cubierto</span>';
   const filas = lista.map(o => `<tr class="${o.k === sel ? 'yo' : ''}"><td class="izq">${esc(o.nombre)}</td>
-    <td>${o.consumo ? nf0.format(o.consumo) : '–'}</td><td>${o.consumo ? nf2.format(o.prom) : '–'}</td><td>${nf0.format(o.req)}</td>
+    <td>${o.consumo ? nf0.format(o.consumo) : '–'}</td><td>${o.consumo ? nf2.format(o.prom) : '–'}</td><td>${o.consumo ? nf2.format(o.prom * 7) : '–'}</td><td>${nf0.format(o.req)}</td>
     <td>${o.mochila == null ? '–' : nf0.format(o.mochila)}</td><td>${o.req ? chip(o.falta) : '–'}</td></tr>`).join('');
-  return `<table><thead><tr><th class="izq">Técnico (${lista.length})</th><th>Consumo del mes</th><th>Promedio diario</th>
+  const promTot = r.dias > 0 ? t.consumo / r.dias : 0;
+  return `<table><thead><tr><th class="izq">Técnico (${lista.length})</th><th>Consumo del mes</th><th>Promedio diario</th><th>Promedio semanal</th>
     <th>Requerido ${r.cob + r.seg} días</th><th>Mochila</th><th>Falta entregar</th></tr></thead><tbody>${filas}</tbody>
-    <tfoot><tr><td class="izq">Total</td><td>${nf0.format(t.consumo)}</td><td>${nf2.format(r.dias > 0 ? t.consumo / r.dias : 0)}</td>
+    <tfoot><tr><td class="izq">Total</td><td>${nf0.format(t.consumo)}</td><td>${nf2.format(promTot)}</td><td>${nf2.format(promTot * 7)}</td>
     <td>${nf0.format(t.req)}</td><td>${nf0.format(t.mochila)}</td><td>${nf0.format(t.falta)}</td></tr></tfoot></table>`;
 }
 
@@ -599,6 +600,20 @@ function pintarDetalle(r) {
   svg += `<line x1="${mI}" x2="${W - mD}" y1="${y(f.prom)}" y2="${y(f.prom)}" stroke="var(--acento)" stroke-width="2" stroke-dasharray="5 3"/>`;
   svg += `<text x="${W - mD}" y="${y(f.prom) - 4}" text-anchor="end" font-size="10" font-weight="600" fill="var(--acento)">promedio ${nf2.format(f.prom)}</text></svg>`;
 
+  // Consumo por semana (lunes a domingo) dentro del periodo
+  const semanas = new Map();
+  for (const d of dias) {
+    const lunes = d - ((fechaDe(d).getUTCDay() + 6) % 7);
+    const s = semanas.get(lunes) || { desde: Math.max(lunes, r.dMin), hasta: Math.min(lunes + 6, r.dMax), consumo: 0 };
+    s.consumo += porDia.get(d) || 0;
+    semanas.set(lunes, s);
+  }
+  const maxS = Math.max(1, ...[...semanas.values()].map(s => s.consumo));
+  const barrasSem = [...semanas.values()].map(s => {
+    const n = s.hasta - s.desde + 1;
+    return `<div class="barra" title="${n} días con datos en esta semana"><span class="n">${textoDia(s.desde)} – ${textoDia(s.hasta)}${n < 7 ? ' (' + n + ' d)' : ''}</span><span class="t"><i style="width:${(s.consumo / maxS * 100).toFixed(1)}%"></i></span><span class="v">${nf0.format(s.consumo)}</span></div>`;
+  }).join('');
+
   const ranking = [...porTec.entries()].sort((a, b) => b[1] - a[1]);
   const maxT = Math.max(1, ...ranking.map(e => e[1]));
   const barras = ranking.map(([t, v]) => `<div class="barra ${t === estado.tec ? 'yo' : ''}"><span class="n" title="${esc(D.tecnicos[t])}">${esc(corto(D.tecnicos[t]))}</span><span class="t"><i style="width:${(v / maxT * 100).toFixed(1)}%"></i></span><span class="v">${nf0.format(v)}</span></div>`).join('');
@@ -609,9 +624,12 @@ function pintarDetalle(r) {
       <div><span class="etiqueta">Consumo del mes</span><b>${nf0.format(f.consumo)}</b></div>
       <div><span class="etiqueta">Por orden</span><b>${nf2.format(f.porOs)}</b></div>
       <div><span class="etiqueta">Promedio diario</span><b>${nf2.format(f.prom)}</b></div>
+      <div><span class="etiqueta">Promedio semanal</span><b>${nf2.format(f.promSem)}</b></div>
       <div><span class="etiqueta">Stock requerido</span><b>${nf0.format(f.total)}</b></div>
+      <div><span class="etiqueta">Días del periodo</span><b>${nf0.format(r.dias)}</b></div>
     </div>
     <div class="grafico"><span class="etiqueta">Consumo por día${estado.tec >= 0 ? ' · ' + esc(corto(D.tecnicos[estado.tec])) : ''}</span>${svg}</div>
+    <div><span class="etiqueta">Consumo por semana${estado.tec >= 0 ? ' · ' + esc(corto(D.tecnicos[estado.tec])) : ''}</span><div class="barras" style="margin-top:6px">${barrasSem}</div></div>
     <div><span class="etiqueta">Consumo por técnico en el mes</span><div class="barras" style="margin-top:6px">${barras}</div></div>`;
 }
 
