@@ -183,6 +183,15 @@ tr.sub tfoot td { font-weight: 600; border-bottom: 0; }
         <button class="boton secundario oculto" id="btnBorrarStock" type="button">Borrar mochilas</button>
       </div>
     </section>
+    <section class="panel carga" id="zonaAlmacen" aria-labelledby="tituloAlmacen">
+      <h2 id="tituloAlmacen">3 · Stock del almacén <span>Resumen Kardex · saldo final · cada carga reemplaza a la anterior</span></h2>
+      <div class="estado" id="estadoAlmacen">Aún no se cargó el stock del almacén. También puedes escribirlo a mano en la columna Stock almacén.</div>
+      <div class="acciones">
+        <input type="file" id="archivoAlmacen" accept=".xlsx,.xls,.csv" class="oculto">
+        <button class="boton" id="btnAlmacen" type="button">Cargar Stock Almacén</button>
+        <button class="boton secundario oculto" id="btnBorrarAlmacen" type="button">Borrar stock almacén</button>
+      </div>
+    </section>
   </div>
 
   <section class="panel filtros" aria-label="Filtros">
@@ -241,6 +250,8 @@ for (const k of Object.keys(stockActual)) {        // versión anterior: 'TODOS|
 /* Mochila de cada técnico (material asignado), del Excel "Stock Técnico" o escrita a mano:
    { archivo, emision, cargado, tec: { nombreNormalizado: { nombre, mat: { cod: cantidad } } }, nombres: { cod: descripcion } } */
 let mochilas = leer('consumo.mochilas', null);
+/* Datos del último Resumen Kardex cargado: { archivo, almacen, cargado, filas, nombres: { cod: descripcion }, editado } */
+let infoAlmacen = leer('consumo.almacen.info', null);
 let ultimoCalculo = null;
 const claveTec = s => normal(s).replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -449,7 +460,8 @@ function calcular() {
   for (const cod of codigosConStock()) {
     if (vistos.has(cod)) continue;
     const mi = iMat.has(cod) ? iMat.get(cod) : -1 - (extra++);
-    const nombre = iMat.has(cod) ? D.materiales[iMat.get(cod)][1] : (mochilas && mochilas.nombres[cod]) || cod;
+    const nombre = iMat.has(cod) ? D.materiales[iMat.get(cod)][1]
+      : (mochilas && mochilas.nombres[cod]) || (infoAlmacen && infoAlmacen.nombres && infoAlmacen.nombres[cod]) || cod;
     fila(mi, cod, nombre, 0, 0);
   }
   return { filas, cob, seg, dias, diasPeriodo, manual: manual > 0, dMin, dMax, ini9, ult9Tec, os: os.size, osTodas: osTodas.size, tecs: tecs.size, enMes };
@@ -736,6 +748,63 @@ function pintarEstadoStock(aviso) {
 
 const error = t => `<span style="color:var(--alerta)">${t}</span>`;
 
+/* Excel "Resumen Kardex" del almacén: se toma Código Único (columna C) y Saldo Final (columna I) */
+const esStockAlmacen = filas => filas.slice(0, 40).some(f => f.some(c => normal(c) === 'saldo final') && f.some(c => normal(c) === 'codigo unico'));
+function desdeAlmacen(filas, nombreArchivo) {
+  const iCab = filas.findIndex(f => f.some(c => normal(c) === 'saldo final') && f.some(c => normal(c) === 'codigo unico'));
+  const cab = filas[iCab].map(normal);
+  const cCod = cab.indexOf('codigo unico'), cSal = cab.indexOf('saldo final'), cDesc = cab.indexOf('desc material');
+  const lineaAlm = filas.slice(0, iCab).flat().map(String).find(t => /^almac[eé]n:/i.test(t.trim())) || '';
+  const stock = {}, nombres = {};
+  let n = 0;
+  for (let i = iCab + 1; i < filas.length; i++) {
+    const f = filas[i], cod = String(f[cCod] ?? '').trim(), v = parseFloat(f[cSal]);
+    if (!cod || !isFinite(v)) continue;
+    stock[cod] = Math.round(((stock[cod] || 0) + v) * 1000) / 1000;
+    if (cDesc >= 0 && !nombres[cod]) nombres[cod] = String(f[cDesc] ?? '').trim();
+    n++;
+  }
+  if (!n) throw new Error('el Resumen Kardex no tiene filas con Código Único y Saldo Final.');
+  return { stock, info: { archivo: nombreArchivo, almacen: lineaAlm.replace(/^almac[eé]n:\s*/i, '').trim(),
+                          cargado: new Date().toLocaleString('es-PE'), filas: n, nombres } };
+}
+
+function pintarEstadoAlmacen(aviso) {
+  const el = $('estadoAlmacen');
+  const hay = Object.keys(stockActual).length > 0;
+  $('btnBorrarAlmacen').classList.toggle('oculto', !hay);
+  if (!infoAlmacen && !hay) { if (aviso) el.innerHTML = aviso; return; }
+  el.innerHTML = (aviso ? aviso + '<br>' : '') + '<b>Stock almacén:</b> ' +
+    (infoAlmacen ? `${esc(infoAlmacen.archivo)}${infoAlmacen.almacen ? ' · ' + esc(infoAlmacen.almacen) : ''} · cargado ${esc(infoAlmacen.cargado)}` : 'escrito a mano') +
+    ` · ${Object.keys(stockActual).length} materiales` + (infoAlmacen && infoAlmacen.editado ? ` · última edición a mano ${esc(infoAlmacen.editado)}` : '');
+}
+
+/* Recuadro 3: Stock del almacén. Reemplaza todo el stock de almacén anterior. */
+async function cargarAlmacen(lista) {
+  const file = [...(lista || [])][0];
+  if (!file) return;
+  $('estadoAlmacen').textContent = 'Leyendo ' + file.name + '…';
+  try {
+    const filasExcel = await leerFilas(file);
+    if (!esStockAlmacen(filasExcel)) {
+      if (esStockTecnico(filasExcel)) throw new Error('este archivo es un Stock Técnico: cárgalo en el recuadro 2.');
+      if (filasExcel.slice(0, 40).some(f => f.some(c => normal(c) === 'fecha movimiento'))) throw new Error('este archivo es un Parte Diario: cárgalo en el recuadro 1.');
+      throw new Error('no encontré las columnas Código Único y Saldo Final. Revisa que sea el Resumen Kardex del almacén.');
+    }
+    const { stock, info } = desdeAlmacen(filasExcel, file.name);
+    stockActual = {};
+    for (const [cod, v] of Object.entries(stock)) stockActual[claveStock(cod)] = v;
+    infoAlmacen = info;
+    const ok = guardar('consumo.stock', stockActual) && guardar('consumo.almacen.info', infoAlmacen);
+    pintarEstadoAlmacen(`<span style="color:var(--bien)"><b>${esc(file.name)}</b>: saldo final de ${nf0.format(Object.keys(stock).length)} materiales cargado; reemplazó al stock de almacén anterior.</span>` +
+      (ok ? '' : '<br>' + error('Este navegador no dejó guardar el stock: se perderá al cerrar la página.')));
+    if (D) pintar();
+  } catch (e) {
+    pintarEstadoAlmacen(error(`No se pudo cargar <b>${esc(file.name)}</b>: ${esc(e.message)}`));
+    if (!infoAlmacen && !Object.keys(stockActual).length) $('estadoAlmacen').innerHTML += '<br>Aún no se cargó el stock del almacén.';
+  }
+}
+
 /* Recuadro 2: Stock Técnico. Reemplaza las mochilas anteriores. */
 async function cargarStock(lista) {
   const file = [...(lista || [])][0];
@@ -744,6 +813,7 @@ async function cargarStock(lista) {
   $('estadoStock').textContent = 'Leyendo ' + file.name + '…';
   try {
     const filasExcel = await leerFilas(file);
+    if (esStockAlmacen(filasExcel)) throw new Error('este archivo es el stock del almacén: cárgalo en el recuadro 3.');
     if (!esStockTecnico(filasExcel)) {
       const pareceParte = filasExcel.slice(0, 40).some(f => f.some(c => normal(c) === 'fecha movimiento'));
       throw new Error(pareceParte ? 'este archivo es un Parte Diario: cárgalo en el recuadro 1.'
@@ -771,6 +841,7 @@ async function cargarArchivos(lista) {
     try {
       const filasExcel = await leerFilas(file);
       if (esStockTecnico(filasExcel)) throw new Error('este archivo es un Stock Técnico: cárgalo en el recuadro 2.');
+      if (esStockAlmacen(filasExcel)) throw new Error('este archivo es el stock del almacén: cárgalo en el recuadro 3.');
       const nuevo = desdeHoja(filasExcel, file.name);
       const { d, nuevas, repetidas } = fusionar(acumulado, nuevo);
       const guardado = guardar(CLAVE_DATA, d);
@@ -793,9 +864,26 @@ $('btnParte').addEventListener('click', () => $('archivoParte').click());
 $('archivoParte').addEventListener('change', e => { cargarArchivos(e.target.files); e.target.value = ''; });
 $('btnStock').addEventListener('click', () => $('archivoStock').click());
 $('archivoStock').addEventListener('change', e => { cargarStock(e.target.files); e.target.value = ''; });
+$('btnAlmacen').addEventListener('click', () => $('archivoAlmacen').click());
+$('archivoAlmacen').addEventListener('change', e => { cargarAlmacen(e.target.files); e.target.value = ''; });
+let borrarAlmPendiente = null;
+$('btnBorrarAlmacen').addEventListener('click', () => {
+  const b = $('btnBorrarAlmacen');
+  if (!borrarAlmPendiente) {
+    b.textContent = '¿Borrar? Pulsa otra vez';
+    borrarAlmPendiente = setTimeout(() => { borrarAlmPendiente = null; b.textContent = 'Borrar stock almacén'; }, 4000);
+    return;
+  }
+  clearTimeout(borrarAlmPendiente); borrarAlmPendiente = null; b.textContent = 'Borrar stock almacén';
+  stockActual = {}; infoAlmacen = null;
+  try { localStorage.removeItem('consumo.stock'); localStorage.removeItem('consumo.almacen.info'); } catch (e) {}
+  $('estadoAlmacen').textContent = 'Stock de almacén borrado. Carga un Resumen Kardex nuevo o escríbelo a mano en la columna Stock almacén.';
+  pintarEstadoAlmacen();
+  if (D) pintar();
+});
 // Arrastrar: cada recuadro recibe su propio archivo; soltar fuera de ellos no hace nada
 ['dragover', 'drop'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
-[['zonaParte', cargarArchivos], ['zonaStock', cargarStock]].forEach(([id, cargar]) => {
+[['zonaParte', cargarArchivos], ['zonaStock', cargarStock], ['zonaAlmacen', cargarAlmacen]].forEach(([id, cargar]) => {
   const zona = $(id);
   zona.addEventListener('dragenter', () => zona.classList.add('arrastre'));
   zona.addEventListener('dragover', () => zona.classList.add('arrastre'));
@@ -903,6 +991,8 @@ $('tStock').tBodies[0].addEventListener('change', e => {
     const k = claveStock(alm.dataset.cod), v = parseFloat(alm.value);
     if (isFinite(v) && v >= 0) stockActual[k] = v; else delete stockActual[k];
     guardar('consumo.stock', stockActual);
+    if (infoAlmacen) { infoAlmacen.editado = new Date().toLocaleString('es-PE'); guardar('consumo.almacen.info', infoAlmacen); }
+    pintarEstadoAlmacen();
   } else if (moc && estado.tec >= 0) {
     const nombre = D.tecnicos[estado.tec], kt = claveTec(nombre), v = parseFloat(moc.value);
     if (!mochilas) mochilas = { archivo: null, emision: null, cargado: null, tec: {}, nombres: {} };
@@ -939,6 +1029,7 @@ $('btnCopiar').addEventListener('click', async () => {
 // ---------- inicio ----------
 (function inicio() {
   try { localStorage.removeItem('consumo.data'); } catch (e) {}   // formato anterior, sin claves
+  pintarEstadoAlmacen();
   const guardada = leer(CLAVE_DATA, null);
   if (guardada && guardada.filas && guardada.claves && guardada.filas.length === guardada.claves.length) acumulado = guardada;
   else if (DATOS_INCLUIDOS) acumulado = fusionar(null, { ...DATOS_INCLUIDOS, origen: (DATOS_INCLUIDOS.origen || 'Parte Diario') + ' (data incluida)' }).d;
